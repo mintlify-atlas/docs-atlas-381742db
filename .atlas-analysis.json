@@ -1,0 +1,123 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Obstetrics RAG Benchmark",
+  "projectDescription": "A comprehensive research project comparing different Retrieval-Augmented Generation (RAG) techniques applied to medical question-answering in obstetrics.",
+  "theme": "sequoia",
+  "primaryColor": "#40993e",
+  "lightColor": "#183018",
+  "darkColor": "#e4e8e4",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/rag-architectures",
+              "concepts/evaluation-framework",
+              "concepts/data-pipeline"
+            ]
+          },
+          {
+            "group": "RAG Architectures",
+            "pages": [
+              "architectures/simple-semantic",
+              "architectures/hybrid",
+              "architectures/hybrid-rrf",
+              "architectures/hyde",
+              "architectures/query-rewriter",
+              "architectures/pageindex"
+            ]
+          },
+          {
+            "group": "Evaluation",
+            "pages": [
+              "evaluation/ragas-metrics",
+              "evaluation/running-evaluations",
+              "evaluation/interpreting-results",
+              "evaluation/benchmarking"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/extending-research",
+              "guides/adding-rag-architectures",
+              "guides/integrating-models",
+              "guides/customizing-metrics"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "RAG Modules",
+            "pages": [
+              "api/rag/simple",
+              "api/rag/hybrid",
+              "api/rag/hybrid-rrf",
+              "api/rag/hyde",
+              "api/rag/rewriter",
+              "api/rag/pageindex"
+            ]
+          },
+          {
+            "group": "Evaluation",
+            "pages": [
+              "api/evaluation/ragas-evaluator"
+            ]
+          },
+          {
+            "group": "Common Utilities",
+            "pages": [
+              "api/common/model-provider",
+              "api/common/pricing",
+              "api/common/usage-metrics"
+            ]
+          },
+          {
+            "group": "Scripts",
+            "pages": [
+              "api/scripts/create-embeddings",
+              "api/scripts/run-evaluation"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multiple RAG architectures: Simple Semantic, Hybrid (BM25+Semantic), HyDE, Query Rewriter, and PageIndex",
+    "RAGAS evaluation framework with faithfulness, answer relevancy, context precision, and context recall metrics",
+    "Multi-model benchmarking across GPT-3.5, GPT-4, GPT-4o, and specialized medical language models",
+    "ChromaDB vector store with OpenAI embeddings for semantic search",
+    "LangChain-based pipeline for retrieval and generation",
+    "Comprehensive evaluation results with JSON output and timestamp tracking"
+  ],
+  "publicApiSurface": [
+    "query_for_evaluation(question, model_name) - Simple Semantic RAG",
+    "query_for_evaluation(question, model_name) - Hybrid RAG with BM25",
+    "query_for_evaluation(question, model_name) - Hybrid RRF RAG",
+    "query_for_evaluation(question, model_name) - HyDE RAG",
+    "query_for_evaluation(question, model_name) - Query Rewriter RAG",
+    "query_for_evaluation(question, model_name) - PageIndex RAG",
+    "RAGASEvaluator.evaluate_rag(rag_type, model_name) - Evaluate single RAG",
+    "RAGASEvaluator.evaluate_all_models_single_rag(rag_type) - Multi-model evaluation",
+    "RAGASEvaluator.evaluate_all_models_all_rags() - Comprehensive benchmark",
+    "create_llm(model_config) - Create LLM instance from config",
+    "get_model_identity(model) - Get model identifier",
+    "resolve_total_cost(usage, model) - Calculate API costs"
+  ]
+}
