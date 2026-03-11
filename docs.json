@@ -101,7 +101,8 @@
             "pages": [
               "api/common/model-provider",
               "api/common/pricing",
-              "api/common/usage-metrics"
+              "api/common/usage-metrics",
+              "api/common/utils"
             ]
           },
           {

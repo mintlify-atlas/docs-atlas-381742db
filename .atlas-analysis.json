@@ -101,7 +101,7 @@
   "keyFeatures": [
     "Multiple RAG architectures: Simple Semantic, Hybrid (BM25+Semantic), HyDE, Query Rewriter, and PageIndex",
     "RAGAS evaluation framework with faithfulness, answer relevancy, context precision, and context recall metrics",
-    "Multi-model benchmarking across GPT-3.5, GPT-4, GPT-4o, and specialized medical language models",
+    "Multi-model benchmarking with GPT-4o default, extensible to GPT-5, GPT-5.2, MediPhi, and MedGemma",
     "ChromaDB vector store with OpenAI embeddings for semantic search",
     "LangChain-based pipeline for retrieval and generation",
     "Comprehensive evaluation results with JSON output and timestamp tracking"

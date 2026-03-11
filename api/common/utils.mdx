@@ -1,0 +1,163 @@
+---
+title: "Utils"
+description: "Shared utility functions for RAG evaluation and analysis export"
+---
+
+# Utils Module
+
+The `utils.py` module provides utility functions for exporting RAGAS evaluation results to various file formats.
+
+## Overview
+
+Located at `src/common/utils.py`, this module contains helper functions for:
+- Exporting RAGAS results to CSV and Excel formats
+- Merging performance metadata with evaluation results
+- Automated timestamp-based file naming
+
+## Functions
+
+### export_ragas_analysis()
+
+Export RAGAS evaluation results to CSV and optionally Excel files with performance metadata.
+
+<ParamField path="results" type="Any" required>
+  RAGAS evaluation result object (must support `.to_pandas()` method)
+</ParamField>
+
+<ParamField path="analysis_name" type="str" required>
+  Short label used in the output file names (e.g., "hybrid_gpt4o")
+</ParamField>
+
+<ParamField path="output_dir" type="Optional[Path]" default="<project_root>/results/">
+  Directory where files will be saved. If not specified, defaults to the project's `results/` directory.
+</ParamField>
+
+<ParamField path="performance_metadata" type="Optional[List[Dict]]">
+  Optional list of per-question performance dictionaries containing:
+  - `execution_time`: Time taken for query execution
+  - `input_tokens`: Number of input tokens consumed
+  - `output_tokens`: Number of output tokens generated
+  - `total_cost`: Total API cost for the query
+</ParamField>
+
+**Returns:**
+
+<ResponseField name="exported" type="Dict[str, Path]">
+  Dictionary mapping file type labels to saved file paths:
+  - `"csv"`: Path to the CSV file (always created)
+  - `"excel"`: Path to the Excel file (only if openpyxl is installed)
+</ResponseField>
+
+## Usage Example
+
+```python
+from pathlib import Path
+from src.common.utils import export_ragas_analysis
+from src.evaluation.ragas_evaluator import RAGASEvaluator
+
+# Run evaluation
+evaluator = RAGASEvaluator(rag_type="hybrid")
+test_queries = evaluator.load_test_queries()
+dataset = evaluator.prepare_dataset(test_queries)
+results = evaluator.evaluate_rag("hybrid", "gpt-4o")
+
+# Export results with performance metadata
+performance_data = [
+    {
+        "execution_time": 2.5,
+        "input_tokens": 1200,
+        "output_tokens": 350,
+        "total_cost": 0.0045
+    },
+    # ... more question metadata
+]
+
+exported_files = export_ragas_analysis(
+    results=results,
+    analysis_name="hybrid_gpt4o",
+    performance_metadata=performance_data
+)
+
+print(f"CSV exported to: {exported_files['csv']}")
+if 'excel' in exported_files:
+    print(f"Excel exported to: {exported_files['excel']}")
+```
+
+## Output Files
+
+### File Naming Convention
+
+Files are automatically named with the pattern:
+```
+ragas_analysis_{analysis_name}_{timestamp}.{ext}
+```
+
+**Example:**
+```
+ragas_analysis_hybrid_gpt4o_20260311_143025.csv
+ragas_analysis_hybrid_gpt4o_20260311_143025.xlsx
+```
+
+### CSV Format
+
+The CSV file includes:
+- All RAGAS metric columns (faithfulness, answer_relevancy, context_precision, context_recall)
+- Question and answer text
+- Ground truth values
+- Performance metadata (if provided): execution_time, input_tokens, output_tokens, total_cost
+
+### Excel Format
+
+The Excel file contains the same data as CSV with:
+- Proper column formatting
+- UTF-8 encoding support
+- Automatic column width adjustment (if using modern openpyxl)
+
+<Note>
+  Excel export requires the `openpyxl` package. If not installed, only the CSV file will be created. The function silently skips Excel export without raising an error.
+</Note>
+
+## Performance Metadata Integration
+
+When `performance_metadata` is provided, the function:
+
+1. Converts the list of performance dictionaries to a DataFrame
+2. Aligns it with the RAGAS results by row position
+3. Removes duplicate `question` columns if present
+4. Concatenates the DataFrames horizontally
+
+This allows you to analyze both evaluation quality metrics and performance characteristics (time, tokens, cost) in a single export.
+
+## Error Handling
+
+The function handles several edge cases:
+
+<AccordionGroup>
+  <Accordion title="Results Object Type">
+    If the `results` object doesn't have a `.to_pandas()` method, raises `TypeError` with a descriptive message.
+  </Accordion>
+  
+  <Accordion title="Missing openpyxl">
+    If `openpyxl` is not installed, silently skips Excel export and only creates CSV. No error is raised.
+  </Accordion>
+  
+  <Accordion title="Missing Output Directory">
+    Automatically creates the output directory (including parent directories) if it doesn't exist using `mkdir(parents=True, exist_ok=True)`.
+  </Accordion>
+</AccordionGroup>
+
+## Implementation Details
+
+**Source:** `src/common/utils.py:10-69`
+
+The function:
+- Uses pandas for DataFrame operations
+- Employs timestamp-based naming to prevent file overwrites
+- Creates output directories automatically
+- Handles optional dependencies gracefully
+
+## Related
+
+- [RAGASEvaluator](/api/evaluation/ragas-evaluator) - Generates the results objects used by this function
+- [Pricing](/api/common/pricing) - Calculates the cost values included in performance metadata
+- [Usage Metrics](/api/common/usage-metrics) - Extracts token counts for performance tracking

@@ -30,7 +30,7 @@ This project systematically evaluates different RAG architectures for answering 
   </Card>
   
   <Card title="Model Performance" icon="microchip">
-    Assess how different LLMs (GPT-3.5, GPT-4, GPT-4o) perform with each RAG architecture
+    Assess how different LLMs (GPT-4o default, plus GPT-5, MediPhi, MedGemma) perform with each RAG architecture
   </Card>
   
   <Card title="Retrieval Quality" icon="bullseye">
@@ -83,12 +83,16 @@ flowchart LR
   </Accordion>
   
   <Accordion title="Language Models">
-    The system evaluates multiple OpenAI models to understand how model capability affects RAG performance:
+    The system supports evaluation across multiple language models:
     
-    - **GPT-3.5 Turbo**: Fast, cost-effective baseline
-    - **GPT-4**: High-capability general model
-    - **GPT-4o**: Optimized latest generation
-    - **GPT-4o Mini**: Efficient compact model
+    **Default models** (used by RAG implementations):
+    - **GPT-4o**: Default high-performance model (temperature=0)
+    - **GPT-3.5-turbo**: Used for HyDE hypothetical document generation
+    
+    **Multi-model evaluation registry** (via MODELS_REGISTRY):
+    - **gpt-5, gpt-5.2**: Next-generation OpenAI models
+    - **microsoft/MediPhi-Instruct (mediphi)**: Medical-specialized HuggingFace model
+    - **google/medgemma-1.5-4b-it (medgemma)**: Medical-focused compact model
   </Accordion>
   
   <Accordion title="Evaluation Framework">
@@ -182,7 +186,8 @@ This benchmark addresses critical questions for medical RAG systems:
    - Does semantic search alone suffice, or do hybrid approaches improve results?
    
 2. **How much does model choice matter?**
-   - Is GPT-4 significantly better than GPT-3.5 for medical RAG?
+   - How do next-gen models (GPT-5) compare to GPT-4o for medical RAG?
+   - Can specialized medical models (MediPhi, MedGemma) outperform general-purpose LLMs?
    
 3. **What are the cost-performance tradeoffs?**
    - Can cheaper models achieve similar quality with better retrieval?
