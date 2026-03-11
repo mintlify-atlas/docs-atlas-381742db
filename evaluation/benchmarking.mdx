@@ -1,0 +1,546 @@
+---
+title: 'Benchmarking'
+description: 'Best practices for comprehensive RAG architecture benchmarking'
+---
+
+# Benchmarking
+
+This guide covers best practices for running comprehensive benchmarks to compare RAG architectures and identify optimal configurations.
+
+## Benchmarking Goals
+
+A comprehensive benchmark should answer:
+
+<CardGroup cols={2}>
+  <Card title="Quality" icon="star">
+    Which RAG architecture produces the highest quality answers?
+  </Card>
+  <Card title="Performance" icon="gauge">
+    Which architecture is fastest and most cost-effective?
+  </Card>
+  <Card title="Robustness" icon="shield">
+    Which architecture handles diverse questions best?
+  </Card>
+  <Card title="Scalability" icon="chart-line">
+    Which architecture scales best to production?
+  </Card>
+</CardGroup>
+
+## Benchmark Types
+
+### 1. Single RAG Benchmark
+
+Evaluate one RAG architecture in depth.
+
+```bash
+python scripts/run_evaluation.py hybrid
+```
+
+**Use when:**
+- Testing a new RAG implementation
+- Debugging a specific architecture
+- Quick quality check
+
+**Output:** `ragas_evaluation_[rag_type]_[timestamp].json`
+
+### 2. Multi-Model Benchmark
+
+Compare how different LLMs perform with the same RAG architecture.
+
+```bash
+python scripts/run_evaluation.py multi-model hybrid
+```
+
+**Use when:**
+- Selecting the best LLM for your use case
+- Understanding model-specific strengths
+- Cost-benefit analysis across models
+
+**Output:** `ragas_multimodel_[rag_type]_[timestamp].json`
+
+### 3. Comprehensive Benchmark
+
+Test all RAG architectures with all available models.
+
+```bash
+python scripts/run_evaluation.py all-models-all-rags
+```
+
+**Use when:**
+- Conducting research
+- Selecting production configuration
+- Publishing results
+
+**Output:** `ragas_comprehensive_all_rags_all_models_[timestamp].json`
+
+## Running a Comprehensive Benchmark
+
+<Steps>
+  <Step title="Prepare Environment">
+    Ensure stable conditions for fair comparison:
+    ```bash
+    # Clean environment
+    rm -rf data/embeddings/chroma_db/
+    
+    # Recreate embeddings
+    python scripts/create_embeddings.py
+    
+    # Verify API keys
+    cat .env | grep OPENAI_API_KEY
+    ```
+  </Step>
+  
+  <Step title="Run Comprehensive Evaluation">
+    Start the full benchmark:
+    ```bash
+    python scripts/run_evaluation.py all-models-all-rags > benchmark_log.txt 2>&1 &
+    ```
+    
+    This runs in the background and logs all output.
+  </Step>
+  
+  <Step title="Monitor Progress">
+    Watch the log file:
+    ```bash
+    tail -f benchmark_log.txt
+    ```
+    
+    You'll see progress through RAG types:
+    ```
+    ========================= SIMPLE SEMANTIC RAG =========================
+    Starting RAGAS evaluation
+    ...
+    ============================= HYDE RAG =============================
+    Starting RAGAS evaluation
+    ...
+    ```
+  </Step>
+  
+  <Step title="Wait for Completion">
+    Typical duration:
+    - 6 RAG types × 4 models × 10 questions = 240 evaluations
+    - ~5-10 seconds per question
+    - **Total: 2-4 hours**
+    
+    <Warning>
+    Do not interrupt the benchmark. Results are only saved at the end.
+    </Warning>
+  </Step>
+</Steps>
+
+## Understanding Benchmark Results
+
+The comprehensive benchmark produces a detailed JSON file:
+
+```json
+{
+  "metadata": {
+    "timestamp": "2026-03-11T11:15:57.123456",
+    "evaluation_type": "comprehensive_rag_comparison",
+    "dataset_size": 10,
+    "rags_evaluated": [
+      "simple", "hybrid", "hybrid-rrf", "hyde", "rewriter", "pageindex"
+    ],
+    "models_evaluated": [
+      "gpt-4o", "gpt-5", "gpt-5.2", "google/medgemma-1.5-4b-it"
+    ]
+  },
+  "summary": { /* Metrics for each RAG × Model combination */ },
+  "best_performers": { /* Top performers for each metric */ },
+  "question_by_question": [ /* Detailed results */ ]
+}
+```
+
+### Summary Section
+
+Compare all RAG architectures:
+
+```json
+{
+  "summary": {
+    "simple": {
+      "rag_name": "Simple Semantic RAG",
+      "metrics": {
+        "faithfulness": 0.850,
+        "answer_relevancy": 0.265,
+        "context_precision": 0.779,
+        "context_recall": 0.600
+      },
+      "performance": {
+        "average_execution_time": 8.234,
+        "total_cost": 0.021433
+      }
+    },
+    "hybrid": {
+      "rag_name": "Hybrid RAG (BM25 + Semantic)",
+      "metrics": {
+        "faithfulness": 0.912,
+        "answer_relevancy": 0.783,
+        "context_precision": 0.891,
+        "context_recall": 0.845
+      },
+      "performance": {
+        "average_execution_time": 12.567,
+        "total_cost": 0.038921
+      }
+    }
+    // ... more RAGs
+  }
+}
+```
+
+### Best Performers
+
+Identify winners for each metric:
+
+```json
+{
+  "best_performers": {
+    "faithfulness": {
+      "rag_type": "hybrid-rrf",
+      "rag_name": "Hybrid RAG + RRF (BM25 + Semantic)",
+      "score": 0.924
+    },
+    "answer_relevancy": {
+      "rag_type": "rewriter",
+      "rag_name": "Rewriter RAG (Multi-Query)",
+      "score": 0.887
+    },
+    "context_precision": {
+      "rag_type": "hybrid-rrf",
+      "rag_name": "Hybrid RAG + RRF (BM25 + Semantic)",
+      "score": 0.901
+    },
+    "context_recall": {
+      "rag_type": "rewriter",
+      "rag_name": "Rewriter RAG (Multi-Query)",
+      "score": 0.894
+    },
+    "best_avg_execution_time": {
+      "rag_type": "simple",
+      "rag_name": "Simple Semantic RAG",
+      "score": 8.234
+    },
+    "best_total_cost": {
+      "rag_type": "simple",
+      "rag_name": "Simple Semantic RAG",
+      "score": 0.021
+    }
+  }
+}
+```
+
+## Comparing RAG Architectures
+
+### Quality Comparison
+
+Rank by overall average score:
+
+| Rank | RAG Architecture | Avg Score | Faithfulness | Answer Rel. | Ctx Prec. | Ctx Recall |
+|------|-----------------|-----------|--------------|-------------|-----------|------------|
+| 1 | Hybrid-RRF | 0.891 | 0.924 | 0.875 | 0.901 | 0.864 |
+| 2 | Rewriter | 0.872 | 0.901 | 0.887 | 0.834 | 0.894 |
+| 3 | Hybrid | 0.858 | 0.912 | 0.783 | 0.891 | 0.845 |
+| 4 | HyDE | 0.812 | 0.867 | 0.745 | 0.823 | 0.812 |
+| 5 | PageIndex | 0.781 | 0.834 | 0.698 | 0.801 | 0.791 |
+| 6 | Simple | 0.623 | 0.850 | 0.265 | 0.779 | 0.600 |
+
+<Tip>
+**Key insights:**
+- **Hybrid-RRF** offers the best overall quality
+- **Rewriter** excels at recall (finding all relevant info)
+- **Simple** is fast but lacks answer relevancy
+</Tip>
+
+### Performance Comparison
+
+Rank by speed and cost:
+
+| Rank | RAG Architecture | Avg Time (s) | Total Cost | Cost per Q |
+|------|-----------------|-------------|-----------|------------|
+| 1 | Simple | 8.2 | $0.021 | $0.0021 |
+| 2 | Hybrid | 12.6 | $0.039 | $0.0039 |
+| 3 | PageIndex | 13.1 | $0.041 | $0.0041 |
+| 4 | Hybrid-RRF | 14.8 | $0.048 | $0.0048 |
+| 5 | HyDE | 18.3 | $0.067 | $0.0067 |
+| 6 | Rewriter | 21.7 | $0.089 | $0.0089 |
+
+<Tip>
+**Key insights:**
+- **Simple** is 2.6× faster than Rewriter
+- **Simple** costs 4.2× less than Rewriter
+- Advanced RAGs trade cost/speed for quality
+</Tip>
+
+### Trade-off Analysis
+
+<CardGroup cols={2}>
+  <Card title="Best Overall Quality" icon="trophy">
+    **Hybrid-RRF**
+    - Average score: 0.891
+    - Excels in all metrics
+    - Cost: $0.048 per 10 questions
+    
+    **Use for:** Production systems where quality matters most
+  </Card>
+  
+  <Card title="Best Balance" icon="scale-balanced">
+    **Hybrid RAG**
+    - Average score: 0.858 (only 3.7% lower)
+    - 15% faster than Hybrid-RRF
+    - 19% cheaper than Hybrid-RRF
+    
+    **Use for:** Most production use cases
+  </Card>
+  
+  <Card title="Best Performance" icon="rocket">
+    **Simple Semantic**
+    - Fastest: 8.2s average
+    - Cheapest: $0.021 total
+    - Score: 0.623 (acceptable)
+    
+    **Use for:** High-volume, cost-sensitive applications
+  </Card>
+  
+  <Card title="Best Recall" icon="magnifying-glass">
+    **Rewriter RAG**
+    - Context recall: 0.894
+    - Answer relevancy: 0.887
+    - Most thorough retrieval
+    
+    **Use for:** Critical applications requiring completeness
+  </Card>
+</CardGroup>
+
+## Cross-Model Analysis
+
+For multi-model benchmarks, analyze how models perform across RAGs:
+
+```json
+{
+  "question_by_question": [
+    {
+      "question_id": 1,
+      "question": "¿En qué momento y quien debe reevaluar...",
+      "rag_results": {
+        "gpt-4o": { /* metrics */ },
+        "gpt-5": { /* metrics */ },
+        "gpt-5.2": { /* metrics */ },
+        "google/medgemma-1.5-4b-it": { /* metrics */ }
+      }
+    }
+  ]
+}
+```
+
+### Model Performance Matrix
+
+| Model | Avg Score | Faithfulness | Answer Rel. | Cost |
+|-------|-----------|--------------|-------------|------|
+| gpt-5.2 | 0.892 | 0.934 | 0.901 | $0.045 |
+| gpt-5 | 0.876 | 0.912 | 0.887 | $0.038 |
+| gpt-4o | 0.854 | 0.889 | 0.834 | $0.041 |
+| medgemma-1.5-4b | 0.623 | 0.850 | 0.265 | $0.021 |
+
+<Note>
+**Insights:**
+- **GPT-5.2** offers best quality but at higher cost
+- **GPT-5** provides best value (quality/cost ratio)
+- **Medical-specialized models** (medgemma) need more tuning
+</Note>
+
+## Best Practices
+
+### Fair Comparison
+
+<AccordionGroup>
+  <Accordion title="Use identical test data">
+    All RAGs should be evaluated on the exact same questions:
+    ```python
+    # From ragas_evaluator.py:49-90
+    DATA_GT = [  # Same 10 questions for all evaluations
+        {"question": "...", "ground_truth": "..."},
+        # ...
+    ]
+    ```
+  </Accordion>
+  
+  <Accordion title="Same embedding model">
+    Don't change embeddings between RAG evaluations:
+    ```python
+    # All RAGs use: OpenAI text-embedding-3-small
+    # Stored in: data/embeddings/chroma_db/
+    ```
+  </Accordion>
+  
+  <Accordion title="Consistent retrieval parameters">
+    Keep k (number of chunks) consistent:
+    ```python
+    # Default k=5 for all RAGs
+    results = vectorstore.similarity_search(query, k=5)
+    ```
+  </Accordion>
+  
+  <Accordion title="Same evaluation conditions">
+    - Run evaluations on the same hardware
+    - Use the same API tier (avoid rate limits)
+    - Don't run in parallel (can affect timing)
+  </Accordion>
+</AccordionGroup>
+
+### Result Storage Organization
+
+Organize results for easy comparison:
+
+```
+results/
+├── benchmarks/
+│   ├── 2026-03-11_comprehensive/
+│   │   ├── ragas_comprehensive_all_rags_all_models_20260311_111557.json
+│   │   ├── analysis.ipynb
+│   │   └── visualizations/
+│   │       ├── metrics_comparison.png
+│   │       ├── cost_analysis.png
+│   │       └── performance_heatmap.png
+│   └── 2026-03-10_hybrid_only/
+│       └── ragas_multimodel_hybrid_20260310_153022.json
+└── single_runs/
+    ├── ragas_evaluation_simple_20260311_093843.json
+    └── ragas_evaluation_hybrid_20260311_095023.json
+```
+
+### Documentation
+
+Document your benchmark methodology:
+
+```markdown
+# Benchmark Report: 2026-03-11
+
+## Setup
+- Date: March 11, 2026
+- Environment: Python 3.11, MacBook Pro M2
+- Models tested: gpt-4o, gpt-5, gpt-5.2, medgemma-1.5-4b
+- RAGs tested: simple, hybrid, hybrid-rrf, hyde, rewriter, pageindex
+- Dataset: 10 obstetric questions (Spanish)
+- Embeddings: OpenAI text-embedding-3-small
+
+## Key Findings
+1. Hybrid-RRF achieved highest quality (0.891 avg)
+2. Simple RAG was fastest (8.2s avg) and cheapest ($0.021)
+3. GPT-5 offered best quality/cost ratio
+4. Medical models need further tuning
+
+## Recommendations
+- Use Hybrid RAG for production (good balance)
+- Consider Hybrid-RRF for critical applications
+- Use Simple RAG for high-volume, cost-sensitive use cases
+```
+
+## Analyzing Results Programmatically
+
+### Load and Compare
+
+```python
+import json
+import pandas as pd
+
+# Load comprehensive results
+with open('results/ragas_comprehensive_all_rags_all_models_20260311_111557.json') as f:
+    data = json.load(f)
+
+# Extract summary data
+rows = []
+for rag_type, rag_data in data['summary'].items():
+    row = {
+        'rag_type': rag_type,
+        'rag_name': rag_data['rag_name'],
+        **rag_data['metrics'],
+        **rag_data['performance']
+    }
+    rows.append(row)
+
+df = pd.DataFrame(rows)
+
+# Calculate overall average
+df['avg_score'] = df[['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall']].mean(axis=1)
+
+# Sort by quality
+df_by_quality = df.sort_values('avg_score', ascending=False)
+print("\nRAGs ranked by quality:")
+print(df_by_quality[['rag_name', 'avg_score', 'total_cost', 'average_execution_time']])
+
+# Sort by cost
+df_by_cost = df.sort_values('total_cost')
+print("\nRAGs ranked by cost:")
+print(df_by_cost[['rag_name', 'total_cost', 'avg_score']])
+```
+
+### Visualize Results
+
+```python
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Metrics comparison
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+metrics = ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall']
+
+for idx, metric in enumerate(metrics):
+    ax = axes[idx // 2, idx % 2]
+    df_sorted = df.sort_values(metric, ascending=False)
+    ax.barh(df_sorted['rag_type'], df_sorted[metric])
+    ax.set_xlabel('Score')
+    ax.set_title(metric.replace('_', ' ').title())
+    ax.set_xlim(0, 1)
+
+plt.tight_layout()
+plt.savefig('metrics_comparison.png', dpi=300)
+
+# Cost vs Quality scatter
+plt.figure(figsize=(10, 6))
+plt.scatter(df['total_cost'], df['avg_score'], s=100)
+for idx, row in df.iterrows():
+    plt.annotate(row['rag_type'], (row['total_cost'], row['avg_score']), 
+                xytext=(5, 5), textcoords='offset points')
+plt.xlabel('Total Cost ($)')
+plt.ylabel('Average Quality Score')
+plt.title('Cost vs Quality Trade-off')
+plt.grid(True, alpha=0.3)
+plt.savefig('cost_vs_quality.png', dpi=300)
+```
+
+## Publishing Results
+
+For research or internal documentation:
+
+### LaTeX Table
+
+```latex
+\begin{table}[h]
+\centering
+\caption{RAGAS Evaluation Results Across RAG Architectures}
+\begin{tabular}{lcccccc}
+\hline
+RAG Type & Faith. & Ans.Rel. & Ctx.Prec. & Ctx.Rec. & Avg & Cost \\
+\hline
+Hybrid-RRF & 0.924 & 0.875 & 0.901 & 0.864 & 0.891 & \$0.048 \\
+Rewriter & 0.901 & 0.887 & 0.834 & 0.894 & 0.872 & \$0.089 \\
+Hybrid & 0.912 & 0.783 & 0.891 & 0.845 & 0.858 & \$0.039 \\
+HyDE & 0.867 & 0.745 & 0.823 & 0.812 & 0.812 & \$0.067 \\
+PageIndex & 0.834 & 0.698 & 0.801 & 0.791 & 0.781 & \$0.041 \\
+Simple & 0.850 & 0.265 & 0.779 & 0.600 & 0.623 & \$0.021 \\
+\hline
+\end{tabular}
+\end{table}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RAGAS Metrics" icon="chart-line" href="/evaluation/ragas-metrics">
+    Understand what each metric measures
+  </Card>
+  <Card title="Interpreting Results" icon="magnifying-glass" href="/evaluation/interpreting-results">
+    Detailed guide to analyzing evaluation results
+  </Card>
+</CardGroup>

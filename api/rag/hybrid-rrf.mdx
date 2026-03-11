@@ -1,0 +1,271 @@
+---
+title: Hybrid RAG with RRF
+description: Advanced hybrid RAG using Reciprocal Rank Fusion and MMR for diversity
+---
+
+## Overview
+
+The Hybrid RRF module implements an advanced hybrid RAG pipeline that combines lexical retrieval (BM25) and semantic retrieval (ChromaDB), fuses both ranked lists using Reciprocal Rank Fusion (RRF), and then applies Maximal Marginal Relevance (MMR) for diversity.
+
+**Module:** `src.rag.hybrid_rrf`
+
+**Source:** `src/rag/hybrid_rrf.py`
+
+## Configuration
+
+### Retrieval Settings
+
+```python
+k_bm25_candidates = 15      # BM25 initial candidates
+k_semantic_candidates = 15  # Semantic initial candidates
+k_rrf_pool = 10             # Pool size after RRF fusion
+k_final = 5                 # Final documents after MMR
+rrf_k = 60                  # RRF constant
+mmr_lambda = 0.7            # MMR diversity parameter (0.7 = 70% relevance, 30% diversity)
+```
+
+### Default Models
+
+```python
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+### Retrievers
+
+```python
+# 1. Lexical retriever (BM25)
+bm25_retriever = BM25Retriever.from_documents(documents)
+bm25_retriever.k = k_bm25_candidates
+
+# 2. Semantic retriever (Chroma)
+semantic_retriever = vectorstore.as_retriever(
+    search_kwargs={"k": k_semantic_candidates}
+)
+```
+
+## Core Functions
+
+### reciprocal_rank_fusion
+
+```python
+def reciprocal_rank_fusion(
+    rankings: List[List[Document]], 
+    k_constant: int = 60, 
+    top_k: int = 5
+) -> List[Document]
+```
+
+Fuses multiple ranked lists using Reciprocal Rank Fusion (RRF) algorithm.
+
+<ParamField path="rankings" type="List[List[Document]]" required>
+  List of ranked document lists from different retrievers
+</ParamField>
+
+<ParamField path="k_constant" type="int" default="60">
+  RRF constant. Higher values give less weight to rank position
+</ParamField>
+
+<ParamField path="top_k" type="int" default="5">
+  Number of top documents to return after fusion
+</ParamField>
+
+<ResponseField name="return" type="List[Document]">
+  Fused and re-ranked list of documents
+</ResponseField>
+
+**RRF Formula:** `score = sum(1 / (k_constant + rank))` for each document across all rankings.
+
+### mmr_select
+
+```python
+def mmr_select(
+    query: str, 
+    candidate_docs: List[Document], 
+    top_k: int, 
+    lambda_mult: float = 0.7
+) -> List[Document]
+```
+
+Selects top-k documents using Maximal Marginal Relevance (MMR) to balance relevance and diversity.
+
+<ParamField path="query" type="str" required>
+  The original user query
+</ParamField>
+
+<ParamField path="candidate_docs" type="List[Document]" required>
+  Pool of candidate documents to select from
+</ParamField>
+
+<ParamField path="top_k" type="int" required>
+  Number of documents to select
+</ParamField>
+
+<ParamField path="lambda_mult" type="float" default="0.7">
+  Lambda parameter controlling relevance vs diversity tradeoff. 
+  - 1.0 = pure relevance
+  - 0.0 = pure diversity
+  - 0.7 = 70% relevance, 30% diversity
+</ParamField>
+
+<ResponseField name="return" type="List[Document]">
+  Selected documents balancing relevance and diversity
+</ResponseField>
+
+**MMR Formula:** `MMR = λ * relevance(query, doc) - (1-λ) * max_similarity(doc, selected_docs)`
+
+### retrieve_hybrid_rrf
+
+```python
+def retrieve_hybrid_rrf(query: str) -> List[Document]
+```
+
+Retrieves candidates from both BM25 and semantic retrievers, fuses with RRF, then applies MMR diversification.
+
+<ParamField path="query" type="str" required>
+  The user's query
+</ParamField>
+
+<ResponseField name="return" type="List[Document]">
+  Final list of k_final documents (default: 5)
+</ResponseField>
+
+### format_docs
+
+```python
+def format_docs(docs: List[Document]) -> str
+```
+
+Formats retrieved documents for the answer prompt.
+
+<ParamField path="docs" type="List[Document]" required>
+  List of documents to format
+</ParamField>
+
+<ResponseField name="return" type="str">
+  Formatted string with document contents and metadata
+</ResponseField>
+
+### process_hybrid_rrf_query
+
+```python
+def process_hybrid_rrf_query(
+    query: str, 
+    custom_llm: Optional[BaseChatModel] = None
+) -> Dict[str, Any]
+```
+
+Processes a query with Hybrid RAG + RRF fusion.
+
+<ParamField path="query" type="str" required>
+  The user's question
+</ParamField>
+
+<ParamField path="custom_llm" type="BaseChatModel" default="None">
+  Custom language model for answer generation
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Dictionary containing:
+  - `answer` (str): Generated answer
+  - `contexts` (List[str]): Document contents
+  - `retrieved_documents` (List[Document]): Full documents
+  - `metrics` (dict): Token usage and cost metrics
+</ResponseField>
+
+### query_for_evaluation
+
+```python
+def query_for_evaluation(
+    question: str, 
+    llm_model: str = None, 
+    custom_llm: Optional[BaseChatModel] = None
+) -> dict
+```
+
+Wrapper function for RAGAS-compatible evaluation.
+
+<ParamField path="question" type="str" required>
+  The question to process
+</ParamField>
+
+<ParamField path="llm_model" type="str" default="None">
+  Model name to use. If None, uses default "gpt-4o"
+</ParamField>
+
+<ParamField path="custom_llm" type="BaseChatModel" default="None">
+  Pre-configured language model. Takes precedence over llm_model
+</ParamField>
+
+<ResponseField name="return" type="dict">
+  Dictionary containing:
+  - `question` (str): Original question
+  - `answer` (str): Generated answer
+  - `contexts` (List[str]): Retrieved document contents
+  - `source_documents` (List[Document]): Full retrieved documents
+  - `metadata` (dict): Comprehensive metadata including:
+    - `num_contexts` (int): Number of contexts
+    - `retrieval_method` (str): "hybrid_bm25_semantic_rrf_mmr"
+    - `rrf_k` (int): RRF constant used
+    - `k_bm25_candidates` (int): 15
+    - `k_semantic_candidates` (int): 15
+    - `k_rrf_pool` (int): 10
+    - `k_final` (int): 5
+    - `mmr_lambda` (float): 0.7
+    - `llm_model` (str): Model name
+    - `provider` (str): Provider name
+    - `model_id` (str): Full model ID
+    - `embedding_model` (str): "text-embedding-3-small"
+    - `execution_time` (float): Execution time in seconds
+    - `input_tokens` (int): Input tokens used
+    - `output_tokens` (int): Output tokens generated
+    - `total_cost` (float): Total cost in USD
+    - `tokens_used` (int): Total tokens
+    - `usage_source` (str): Usage data source
+    - `cost_source` (str): Cost calculation source
+</ResponseField>
+
+## Usage Example
+
+```python
+from src.rag.hybrid_rrf import query_for_evaluation
+
+# Basic usage
+result = query_for_evaluation(
+    question="¿Cuáles son los riesgos de la cesárea?"
+)
+
+print(result["answer"])
+print(f"Retrieval method: {result['metadata']['retrieval_method']}")
+print(f"RRF constant: {result['metadata']['rrf_k']}")
+print(f"MMR lambda: {result['metadata']['mmr_lambda']}")
+print(f"Cost: ${result['metadata']['total_cost']:.6f}")
+
+# With custom model
+from langchain_openai import ChatOpenAI
+
+custom_llm = ChatOpenAI(model_name="gpt-4o", temperature=0.2)
+result = query_for_evaluation(
+    question="¿Qué es la epidural?",
+    custom_llm=custom_llm
+)
+```
+
+## Pipeline Flow
+
+1. **BM25 Retrieval**: Retrieves top 15 candidates using lexical search
+2. **Semantic Retrieval**: Retrieves top 15 candidates using vector similarity
+3. **RRF Fusion**: Fuses both ranked lists using Reciprocal Rank Fusion, creating a pool of 10 documents
+4. **MMR Selection**: Applies Maximal Marginal Relevance to select final 5 documents balancing relevance and diversity
+5. **Format**: Formats documents with metadata
+6. **Generate**: Uses LLM to generate answer
+7. **Track**: Captures comprehensive metrics
+
+## Key Features
+
+- **Advanced Fusion**: Uses Reciprocal Rank Fusion for better ranking
+- **Diversity**: MMR ensures diverse document selection
+- **Deduplication**: Automatically removes duplicate documents
+- **Tunable Parameters**: Configurable k values and lambda for fine-tuning
+- **High Recall**: Retrieves 15 candidates from each method
+- **Balanced Results**: 70% relevance + 30% diversity by default

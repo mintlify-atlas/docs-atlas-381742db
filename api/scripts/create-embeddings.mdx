@@ -1,0 +1,151 @@
+---
+title: create_embeddings.py
+description: Generate and store OpenAI embeddings for document chunks in ChromaDB
+---
+
+## Overview
+
+The `create_embeddings.py` script processes pre-chunked text data and generates embeddings using OpenAI's embedding models. The generated embeddings are stored in a ChromaDB vector database for efficient similarity search and retrieval in RAG systems.
+
+## Location
+
+```
+scripts/create_embeddings.py
+```
+
+## Usage
+
+```bash
+python scripts/create_embeddings.py
+```
+
+The script runs without command-line arguments and uses configuration constants defined in the script.
+
+## What It Does
+
+The script performs the following steps:
+
+1. **Load Chunks**: Reads pre-processed document chunks from `data/chunks/chunks_final.json`
+2. **Initialize Embeddings Model**: Creates an OpenAI embeddings instance using `text-embedding-3-small`
+3. **Generate Embeddings**: Processes all chunk contents and generates vector embeddings
+4. **Store in ChromaDB**: Persists embeddings and metadata to `data/embeddings/chroma_db`
+5. **Verify Storage**: Confirms the number of vectors stored in the database
+
+## Configuration
+
+The script uses the following default configuration:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Chunks File** | `data/chunks/chunks_final.json` | Input file containing document chunks |
+| **Database Directory** | `data/embeddings/chroma_db` | Output directory for ChromaDB |
+| **Collection Name** | `guia_embarazo_parto` | ChromaDB collection name |
+| **Embedding Model** | `text-embedding-3-small` | OpenAI embedding model |
+
+## Requirements
+
+### Environment Variables
+
+The script requires an OpenAI API key configured in a `.env` file:
+
+```bash
+OPENAI_API_KEY=your_api_key_here
+```
+
+### Dependencies
+
+- `langchain-openai`: For OpenAI embeddings
+- `langchain-community`: For ChromaDB vector store
+- `python-dotenv`: For environment variable management
+
+## Input Format
+
+The input JSON file (`chunks_final.json`) should contain an array of chunk objects with the following structure:
+
+```json
+[
+  {
+    "content": "Text content of the chunk",
+    "page_number": 1,
+    "chunk_index": 0,
+    "section_number": "1.1",
+    "section_title": "Introduction",
+    "source": "document.pdf"
+  }
+]
+```
+
+## Output
+
+The script creates a ChromaDB database at `data/embeddings/chroma_db` with:
+
+- **Vectors**: Embeddings for each chunk's content
+- **Metadata**: Associated metadata for each chunk (page number, section info, etc.)
+- **Collection**: Named `guia_embarazo_parto`
+
+## Example Output
+
+```
+=== STARTING EMBEDDING CREATION PROCESS ===
+Loading chunks from: /path/to/project/data/chunks/chunks_final.json
+Successfully loaded 150 chunks.
+Initializing OpenAI embeddings model...
+Creating and storing vector database at: /path/to/project/data/embeddings/chroma_db
+Collection: guia_embarazo_parto
+
+Embeddings created and stored successfully!
+Total vectors in database: 150
+Database saved at: /path/to/project/data/embeddings/chroma_db
+
+=== PROCESS COMPLETED ===
+```
+
+## Functions
+
+### `load_chunks(file_path)`
+
+Loads chunk data from a JSON file.
+
+**Parameters:**
+- `file_path` (Path): Path to the JSON file containing chunks
+
+**Returns:**
+- `list` or `None`: List of chunk dictionaries if successful, None if failed
+
+### `create_and_store_embeddings(chunks_data)`
+
+Creates embeddings using OpenAI and stores them in ChromaDB.
+
+**Parameters:**
+- `chunks_data` (list): List of chunk dictionaries with content and metadata
+
+**Process:**
+1. Extracts content and metadata from chunks
+2. Initializes OpenAI embeddings model
+3. Creates ChromaDB database from texts
+4. Persists database to disk
+
+### `main()`
+
+Main execution function that orchestrates the embedding creation process.
+
+## Error Handling
+
+The script handles several error conditions:
+
+- **File Not Found**: If `chunks_final.json` doesn't exist
+- **Invalid JSON**: If the chunks file contains malformed JSON
+- **API Key Missing**: If `OPENAI_API_KEY` is not configured
+- **ChromaDB Errors**: Issues during database creation or persistence
+
+## Notes
+
+- The script uses absolute paths based on the script's location to ensure robustness
+- All paths are resolved relative to the project root
+- The embedding model `text-embedding-3-small` provides a good balance of quality and cost
+- ChromaDB automatically persists data when using `persist_directory`
+
+## Related
+
+- [Chunking Process](/documentation/chunking): How document chunks are created
+- [RAG Systems](/rag): Systems that use these embeddings for retrieval

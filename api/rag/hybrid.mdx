@@ -1,0 +1,233 @@
+---
+title: Hybrid RAG
+description: Hybrid RAG pipeline combining BM25 lexical search and semantic search using EnsembleRetriever
+---
+
+## Overview
+
+The Hybrid RAG module implements a hybrid search pipeline that combines lexical search (BM25) and semantic search (ChromaDB) using LangChain's EnsembleRetriever. This approach balances keyword matching with semantic similarity for improved retrieval.
+
+**Module:** `src.rag.hybrid`
+
+**Source:** `src/rag/hybrid.py`
+
+## Configuration
+
+### Default Models
+
+```python
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+### Retriever Configuration
+
+```python
+# 1. Lexical Retriever (BM25)
+bm25_retriever = BM25Retriever.from_documents(documents)
+bm25_retriever.k = 5
+
+# 2. Semantic Retriever (Chroma)
+semantic_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+# 3. Ensemble Retriever
+ensemble_weight_bm25 = 0.5
+ensemble_weight_semantic = 0.5
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[ensemble_weight_bm25, ensemble_weight_semantic]
+)
+```
+
+The ensemble retriever combines results from both retrievers using equal weights (0.5 each) by default.
+
+### Document Loading
+
+```python
+def load_documents() -> List[Document]:
+    """Loads chunks from the JSON file and converts them to LangChain Documents."""
+    with open(chunks_file, 'r', encoding='utf-8') as f:
+        chunks_data = json.load(f)
+    
+    return [
+        Document(page_content=d['content'], metadata=d)
+        for d in chunks_data
+    ]
+```
+
+Loads document chunks from `data/chunks/chunks_final.json`.
+
+## Prompt Template
+
+Uses the same medical-focused prompt template as Simple RAG:
+
+```python
+qa_template = """
+You are a medical expert specializing in pregnancy and childbirth. 
+Your task is to analyze the provided medical context and answer the user's question accurately and concisely.
+
+STRICT INSTRUCTIONS:
+1.  **Base your answer exclusively on the information within the MEDICAL CONTEXT section.** Do not use any external knowledge.
+2.  *The context is ordered by relevance.* Give the highest priority to the first few documents (e.g., Documents 1-2) as they are the most relevant. Use subsequent documents to supplement your answer if needed.
+3.  *Provide a direct and integrated answer.* Your response should be a single, well-written paragraph. Start with a direct answer to the question, then seamlessly incorporate specific details, data, and recommendations from the context to support it.
+4.  *If the context does not contain enough information to answer the question, state that clearly.* Do not try to invent an answer.
+5.  *remember always answer in spanish*
+
+MEDICAL CONTEXT (ordered by relevance):
+{context}
+
+QUESTION: {question}
+
+DETAILED MEDICAL
+"""
+```
+
+## Functions
+
+### load_documents
+
+```python
+def load_documents() -> List[Document]
+```
+
+Loads chunks from the JSON file and converts them to LangChain Documents.
+
+<ResponseField name="return" type="List[Document]">
+  List of LangChain Document objects with content and metadata
+</ResponseField>
+
+### format_docs
+
+```python
+def format_docs(docs: List[Document]) -> str
+```
+
+Formats the retrieved documents to be included in the final prompt.
+
+<ParamField path="docs" type="List[Document]" required>
+  A list of retrieved LangChain Document objects
+</ParamField>
+
+<ResponseField name="return" type="str">
+  A formatted string containing the content of the documents
+</ResponseField>
+
+### process_hybrid_query
+
+```python
+def process_hybrid_query(query: str, custom_llm: ChatOpenAI = None) -> Dict[str, Any]
+```
+
+Processes a query using the hybrid RAG pipeline.
+
+<ParamField path="query" type="str" required>
+  The user's question
+</ParamField>
+
+<ParamField path="custom_llm" type="ChatOpenAI" default="None">
+  A custom language model to use. Defaults to None (uses default gpt-4o)
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  A dictionary containing:
+  - `answer` (str): The generated answer
+  - `contexts` (List[str]): List of retrieved document contents
+  - `retrieved_documents` (List[Document]): Full Document objects
+  - `metrics` (dict): Token usage and cost metrics
+    - `input_tokens` (int): Number of input tokens
+    - `output_tokens` (int): Number of output tokens
+    - `total_tokens` (int): Total tokens used
+    - `usage_source` (str): Source of usage data
+    - `cost` (float): Total cost in USD
+    - `cost_source` (str): Source of cost calculation
+</ResponseField>
+
+### query_for_evaluation
+
+```python
+def query_for_evaluation(
+    question: str, 
+    llm_model: str = None, 
+    custom_llm: Optional[BaseChatModel] = None
+) -> dict
+```
+
+A wrapper function for RAG evaluation frameworks like Ragas.
+
+<ParamField path="question" type="str" required>
+  The question to process
+</ParamField>
+
+<ParamField path="llm_model" type="str" default="None">
+  Model name to use. If None, uses default "gpt-4o"
+</ParamField>
+
+<ParamField path="custom_llm" type="BaseChatModel" default="None">
+  Pre-configured language model. Takes precedence over llm_model
+</ParamField>
+
+<ResponseField name="return" type="dict">
+  A dictionary containing:
+  - `question` (str): The original question
+  - `answer` (str): The generated answer
+  - `contexts` (List[str]): Retrieved document contents
+  - `source_documents` (List[Document]): Full retrieved documents
+  - `metadata` (dict): Comprehensive metadata including:
+    - `num_contexts` (int): Number of retrieved contexts
+    - `retrieval_method` (str): "hybrid_bm25_semantic"
+    - `ensemble_weights` (List[float]): [bm25_weight, semantic_weight]
+    - `llm_model` (str): Model name used
+    - `provider` (str): Provider (e.g., "openai")
+    - `model_id` (str): Full model identifier
+    - `embedding_model` (str): "text-embedding-3-small"
+    - `execution_time` (float): Total execution time in seconds
+    - `input_tokens` (int): Input tokens used
+    - `output_tokens` (int): Output tokens generated
+    - `total_cost` (float): Total cost in USD
+    - `tokens_used` (int): Total tokens (input + output)
+    - `usage_source` (str): Source of usage metrics
+    - `cost_source` (str): Source of cost calculation
+</ResponseField>
+
+## Usage Example
+
+```python
+from src.rag.hybrid import query_for_evaluation
+
+# Basic usage
+result = query_for_evaluation(
+    question="¿Cuáles son los síntomas de la diabetes gestacional?"
+)
+
+print(result["answer"])
+print(f"Retrieval method: {result['metadata']['retrieval_method']}")
+print(f"Ensemble weights: {result['metadata']['ensemble_weights']}")
+print(f"Cost: ${result['metadata']['total_cost']:.6f}")
+
+# Using a custom model
+from langchain_openai import ChatOpenAI
+
+custom_llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0)
+result = query_for_evaluation(
+    question="¿Qué es el parto prematuro?",
+    custom_llm=custom_llm
+)
+```
+
+## Pipeline Flow
+
+1. **BM25 Retrieval**: Retrieves top 5 documents using lexical/keyword matching
+2. **Semantic Retrieval**: Retrieves top 5 documents using vector similarity
+3. **Ensemble Fusion**: Combines results from both retrievers using weighted scores
+4. **Format**: Formats documents with source and page metadata
+5. **Generate**: Uses the LLM to generate an answer based on the combined context
+6. **Track**: Captures token usage and cost metrics
+
+## Key Features
+
+- Combines lexical (BM25) and semantic search
+- Equal weighting (0.5/0.5) between both retrieval methods
+- Better handling of exact keyword matches
+- Improved recall compared to semantic-only search
+- Automatic cost and token tracking
+- Support for custom LLMs

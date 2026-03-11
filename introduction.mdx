@@ -1,0 +1,144 @@
+---
+title: "Introduction"
+description: "A comprehensive research project comparing RAG techniques for medical question-answering in obstetrics"
+---
+
+# Obstetrics RAG Benchmark
+
+A systematic evaluation of Retrieval-Augmented Generation (RAG) architectures applied to medical question-answering in the obstetrics domain. This research project benchmarks multiple RAG strategies across various Large Language Models using the RAGAS evaluation framework.
+
+## Overview
+
+This project investigates the effectiveness of different RAG retrieval strategies for medical Q&A, specifically focusing on pregnancy and childbirth guidance. We implement and evaluate four distinct RAG architectures, comparing their performance across multiple state-of-the-art language models.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running with your first evaluation in minutes
+  </Card>
+  <Card title="RAG Architectures" icon="brain" href="/concepts/rag-architectures">
+    Learn about the different RAG strategies we benchmark
+  </Card>
+  <Card title="Evaluation Framework" icon="chart-line" href="/concepts/evaluation-framework">
+    Understand RAGAS metrics and how we measure performance
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/rag/simple">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multiple RAG Architectures" icon="layer-group">
+    **6 RAG Strategies**
+    
+    Simple Semantic, Hybrid (BM25+Semantic), Hybrid-RRF, HyDE, Query Rewriter, and PageIndex
+  </Card>
+  <Card title="RAGAS Evaluation" icon="vials">
+    **4 Core Metrics**
+    
+    Faithfulness, Answer Relevancy, Context Precision, and Context Recall
+  </Card>
+  <Card title="Multi-Model Support" icon="microchip">
+    **Multiple LLMs**
+    
+    GPT-3.5 Turbo, GPT-4, GPT-4o, GPT-4o Mini, and specialized medical models
+  </Card>
+  <Card title="Vector Search" icon="database">
+    **ChromaDB + OpenAI**
+    
+    Persistent vector store with OpenAI text-embedding-3-small
+  </Card>
+  <Card title="LangChain Pipeline" icon="link">
+    **Production-Ready**
+    
+    Built on LangChain for reliable retrieval and generation
+  </Card>
+  <Card title="Comprehensive Results" icon="file-chart-column">
+    **Detailed Analytics**
+    
+    JSON output with timestamps and question-by-question breakdown
+  </Card>
+</CardGroup>
+
+## Research Focus
+
+This project addresses several key questions in the RAG domain:
+
+- How do different retrieval strategies (semantic, hybrid, hypothetical embeddings, query reformulation) compare in medical Q&A scenarios?
+- What is the impact of model selection on RAG performance in specialized domains?
+- How do we quantitatively assess retrieval quality and generation faithfulness without manual annotation?
+- Which RAG configuration produces the highest quality responses for obstetrics-related questions?
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Medical AI Research">
+    Benchmark RAG techniques for healthcare applications, compare retrieval strategies for domain-specific knowledge bases, and establish baseline performance metrics for medical Q&A systems.
+  </Accordion>
+  <Accordion title="RAG Architecture Comparison">
+    Evaluate different RAG strategies side-by-side, identify optimal configurations for your use case, and understand trade-offs between retrieval approaches.
+  </Accordion>
+  <Accordion title="LLM Evaluation">
+    Compare multiple language models on the same task, assess model-specific performance variations, and identify the best model for your requirements.
+  </Accordion>
+  <Accordion title="Educational Resource">
+    Learn RAG implementation patterns, understand evaluation methodologies, and explore best practices for knowledge-augmented generation.
+  </Accordion>
+</AccordionGroup>
+
+## Getting Started
+
+<Steps>
+  <Step title="Install Dependencies">
+    Clone the repository and install Python dependencies including LangChain, ChromaDB, and RAGAS.
+    
+    ```bash
+    git clone https://github.com/JhonHander/obstetrics-rag-benchmark.git
+    cd obstetrics-rag-benchmark
+    pip install -r requirements.txt
+    ```
+  </Step>
+  <Step title="Configure API Keys">
+    Set up your OpenAI API key for embeddings and LLM access.
+    
+    ```bash
+    echo "OPENAI_API_KEY=your_key_here" > .env
+    ```
+  </Step>
+  <Step title="Create Embeddings">
+    Generate vector embeddings from the medical text corpus.
+    
+    ```bash
+    python scripts/create_embeddings.py
+    ```
+  </Step>
+  <Step title="Run Evaluation">
+    Execute your first RAG evaluation and view results.
+    
+    ```bash
+    python scripts/run_evaluation.py hybrid
+    ```
+  </Step>
+</Steps>
+
+## Research Contributions
+
+- **Systematic Evaluation**: RAGAS-based assessment of RAG architectures in the medical domain
+- **Multiple Architectures**: Comparison of 6 distinct RAG retrieval strategies
+- **Model Diversity**: Evaluation across general-purpose and specialized medical language models
+- **Reproducible Benchmark**: Complete pipeline from data processing to evaluation with detailed results
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Installation" icon="download" href="/installation">
+    Complete installation guide
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Understand the fundamentals
+  </Card>
+  <Card title="Evaluation Guide" icon="flask" href="/evaluation/running-evaluations">
+    Run your first benchmark
+  </Card>
+</CardGroup>

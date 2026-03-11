@@ -1,0 +1,360 @@
+---
+title: 'Running Evaluations'
+description: 'Step-by-step guide to running RAGAS evaluations on RAG systems'
+---
+
+# Running Evaluations
+
+This guide shows you how to run RAGAS evaluations on different RAG architectures using the built-in evaluation system.
+
+## Prerequisites
+
+Before running evaluations, ensure you have:
+
+<Steps>
+  <Step title="Environment Setup">
+    Configure your `.env` file with required API keys:
+    ```bash
+    OPENAI_API_KEY=your_openai_api_key_here
+    ```
+  </Step>
+  
+  <Step title="Install Dependencies">
+    Install all required packages:
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+  
+  <Step title="Create Embeddings">
+    Generate embeddings for the knowledge base:
+    ```bash
+    python scripts/create_embeddings.py
+    ```
+    This creates embeddings in `data/embeddings/chroma_db/`
+  </Step>
+</Steps>
+
+## Single RAG Evaluation
+
+Evaluate a single RAG architecture with the default model.
+
+### Available RAG Types
+
+- `simple` - Simple Semantic RAG
+- `hybrid` - Hybrid RAG (BM25 + Semantic)
+- `hybrid-rrf` - Hybrid RAG + RRF (Reciprocal Rank Fusion)
+- `hyde` - HyDE RAG (Hypothetical Document Embeddings)
+- `rewriter` - Query Rewriter RAG (Multi-Query)
+- `pageindex` - PageIndex RAG
+
+### Command
+
+```bash
+python scripts/run_evaluation.py [rag_type]
+```
+
+### Examples
+
+<CodeGroup>
+```bash Simple Semantic RAG
+python scripts/run_evaluation.py simple
+```
+
+```bash Hybrid RAG
+python scripts/run_evaluation.py hybrid
+```
+
+```bash HyDE RAG
+python scripts/run_evaluation.py hyde
+```
+
+```bash Query Rewriter RAG
+python scripts/run_evaluation.py rewriter
+```
+</CodeGroup>
+
+### What Happens
+
+<Steps>
+  <Step title="Load Test Dataset">
+    The system loads the obstetric questions dataset:
+    ```python
+    # From ragas_evaluator.py:49-90
+    DATA_GT = [
+        {
+            "question": "¿En qué momento y quien debe reevaluar el riesgo...",
+            "ground_truth": "El Ginecobstetra en la semana 28 - 30..."
+        },
+        # 10 questions total
+    ]
+    ```
+  </Step>
+  
+  <Step title="Query RAG System">
+    Each question is processed through the selected RAG architecture:
+    ```python
+    # From ragas_evaluator.py:198-210
+    rag_result = self.query_function(question)
+    
+    # Extract data for RAGAS
+    questions.append(question)
+    answers.append(rag_result["answer"])
+    contexts.append(rag_result["contexts"])
+    ground_truths.append(ground_truth)
+    ```
+  </Step>
+  
+  <Step title="Calculate RAGAS Metrics">
+    RAGAS evaluates all four metrics:
+    ```python
+    # From ragas_evaluator.py:118-123
+    self.metrics = [
+        faithfulness,        # Answer faithfulness to context
+        answer_relevancy,    # Answer relevance to question
+        context_precision,   # Precision of retrieved contexts
+        context_recall       # Recall of necessary information
+    ]
+    ```
+  </Step>
+  
+  <Step title="Save Results">
+    Results are saved to `results/ragas_evaluation_[rag_type]_[timestamp].json`
+  </Step>
+</Steps>
+
+### Example Output
+
+```
+Starting RAGAS evaluation
+System: Simple Semantic RAG
+Dataset: Obstetric queries (10 questions)
+============================================================
+Processing 10 queries with Simple Semantic RAG
+Dataset prepared: 10 queries processed
+Starting RAGAS evaluation...
+Evaluation completed
+
+============================================================
+RAGAS EVALUATION RESULTS
+============================================================
+Faithfulness: 0.850
+Answer Relevancy: 0.265
+Context Precision: 0.779
+Context Recall: 0.600
+
+Average Score: 0.623
+Performance: Good
+
+Results saved to: results/ragas_evaluation_simple_20260311_093843.json
+
+Evaluation completed - 10 queries processed
+```
+
+## Multi-Model Evaluation
+
+Compare performance across multiple language models for a specific RAG architecture.
+
+### Command
+
+```bash
+python scripts/run_evaluation.py multi-model [rag_type]
+```
+
+### Examples
+
+<CodeGroup>
+```bash All models with Hybrid RAG
+python scripts/run_evaluation.py multi-model hybrid
+```
+
+```bash All models with Simple RAG
+python scripts/run_evaluation.py multi-model simple
+```
+
+```bash All models with Rewriter RAG
+python scripts/run_evaluation.py multi-model rewriter
+```
+</CodeGroup>
+
+### Available Models
+
+The system evaluates across all models defined in `MODELS_REGISTRY`:
+
+- `gpt-4o` - OpenAI GPT-4o
+- `gpt-5` - OpenAI GPT-5
+- `gpt-5.2` - OpenAI GPT-5.2
+- `google/medgemma-1.5-4b-it` - Medical-specialized model
+- And other models configured in the registry
+
+### How It Works
+
+```python
+# From ragas_evaluator.py:611-684
+def run_multi_model_evaluation(self, models_to_test: list = None):
+    if models_to_test is None:
+        models_to_test = list(MODELS_REGISTRY.keys())
+
+    print(f"Starting multi-model evaluation for RAG type: '{self.rag_type}'")
+    print(f"Models to be tested: {models_to_test}")
+
+    all_models_data = {}
+    
+    for model_key in models_to_test:
+        print(f"\n--- Evaluating with model: {model_key} ---")
+        
+        # Create the language model instance
+        model_config = MODELS_REGISTRY[model_key]
+        llm_instance = create_llm(model_config)
+        
+        # Run evaluation with this model
+        results_dataset = self.run_evaluation()
+        
+        # Collect results
+        model_data = self.save_results(results_dataset, return_data_only=True, model_name=model_key)
+        all_models_data[model_key] = model_data
+```
+
+### Output File
+
+Results are saved to `results/ragas_multimodel_[rag_type]_[timestamp].json`
+
+<Note>
+Multi-model evaluations take significantly longer since each model processes all 10 questions. Expect 10-30 minutes depending on the models tested.
+</Note>
+
+## Comprehensive Benchmark
+
+Run a complete evaluation across **all RAG architectures** and **all available models**.
+
+### Command
+
+```bash
+python scripts/run_evaluation.py all-models-all-rags
+```
+
+### What This Does
+
+<Steps>
+  <Step title="Evaluate All RAG Types">
+    Runs evaluations for all 6 RAG architectures:
+    - Simple Semantic RAG
+    - HyDE RAG
+    - Rewriter RAG
+    - Hybrid RAG
+    - Hybrid RAG + RRF
+    - PageIndex RAG
+  </Step>
+  
+  <Step title="Test All Models">
+    Each RAG is tested with every model in `MODELS_REGISTRY`
+  </Step>
+  
+  <Step title="Generate Comparison Data">
+    Produces comprehensive comparison showing:
+    - Performance of each RAG architecture
+    - Model-specific performance variations
+    - Cross-model consistency
+    - Optimal configuration identification
+  </Step>
+</Steps>
+
+### Output File
+
+Results are saved to `results/ragas_comprehensive_all_rags_all_models_[timestamp].json`
+
+<Warning>
+This is the most comprehensive evaluation and can take **several hours** to complete. It processes:
+- 6 RAG architectures × N models × 10 questions
+
+Recommended for final benchmarking and research publication.
+</Warning>
+
+## Evaluation with Debug Output
+
+Enable debug mode for detailed logging:
+
+```bash
+python scripts/run_evaluation.py hybrid --debug
+```
+
+Debug mode shows:
+- First 2 questions with full context
+- Detailed error traces
+- Metric calculation steps
+
+```python
+# From ragas_evaluator.py:212-218
+if self.debug and i <= 2:
+    print(f"DEBUG - Query {i}:")
+    print(f"  Question: {question[:100]}...")
+    print(f"  Answer: {rag_result['answer'][:100]}...")
+    print(f"  Contexts count: {len(rag_result['contexts'])}")
+    print(f"  Ground truth: {ground_truth[:100]}...")
+```
+
+## Viewing Results
+
+All evaluation results are saved as JSON files in the `results/` directory:
+
+```bash
+results/
+├── ragas_evaluation_simple_20260311_093843.json
+├── ragas_evaluation_hybrid_20260311_095023.json
+├── ragas_multimodel_rewriter_20260311_130636.json
+└── ragas_comprehensive_all_rags_all_models_20260311_111557.json
+```
+
+<Tip>
+Use a JSON viewer or Python script to analyze results. Each file contains:
+- Metadata (timestamp, model, RAG type)
+- Summary metrics (aggregated scores)
+- Question-by-question breakdown
+- Performance metrics (tokens, cost, execution time)
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Import errors when running evaluation">
+    Ensure you're running from the project root:
+    ```bash
+    cd RAG-Benchmark
+    python scripts/run_evaluation.py hybrid
+    ```
+  </Accordion>
+  
+  <Accordion title="ChromaDB not found">
+    Run the embeddings creation script first:
+    ```bash
+    python scripts/create_embeddings.py
+    ```
+  </Accordion>
+  
+  <Accordion title="All metrics show NaN">
+    This can happen with async timeout issues. The system automatically falls back to synchronous mode:
+    ```python
+    # From ragas_evaluator.py:287-288
+    print("Detected all-NaN async metric output. Switching to synchronous fallback...")
+    return self._evaluate_rag_sync_fallback(dataset)
+    ```
+  </Accordion>
+  
+  <Accordion title="API rate limits">
+    RAGAS metrics use OpenAI's API for evaluation. If you hit rate limits:
+    - Use a smaller test dataset
+    - Add delays between evaluations
+    - Upgrade your OpenAI API tier
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Interpreting Results" icon="chart-line" href="/evaluation/interpreting-results">
+    Learn how to analyze and understand evaluation results
+  </Card>
+  <Card title="Benchmarking" icon="gauge" href="/evaluation/benchmarking">
+    Best practices for comprehensive RAG benchmarking
+  </Card>
+</CardGroup>

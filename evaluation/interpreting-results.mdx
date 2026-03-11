@@ -1,0 +1,436 @@
+---
+title: 'Interpreting Results'
+description: 'Understanding and analyzing RAGAS evaluation results'
+---
+
+# Interpreting Results
+
+This guide helps you understand the JSON output from RAGAS evaluations and extract actionable insights.
+
+## Result File Structure
+
+All evaluation results are saved as JSON files in the `results/` directory with this structure:
+
+```json
+{
+  "metadata": { /* Evaluation context */ },
+  "pricing_config": { /* Cost tracking configuration */ },
+  "summary": { /* Aggregated metrics */ },
+  "question_by_question": [ /* Detailed per-question results */ ]
+}
+```
+
+## Metadata Section
+
+Provides context about the evaluation run:
+
+```json
+{
+  "metadata": {
+    "timestamp": "2026-03-11T09:38:43.085121",
+    "evaluation_type": "single_rag_evaluation_simple",
+    "dataset_size": 10,
+    "rags_evaluated": ["simple"],
+    "model_used": "google/medgemma-1.5-4b-it"
+  }
+}
+```
+
+**Fields:**
+- `timestamp` - When the evaluation was run (ISO 8601 format)
+- `evaluation_type` - Type of evaluation (single RAG, multi-model, comprehensive)
+- `dataset_size` - Number of questions evaluated
+- `rags_evaluated` - List of RAG architectures tested
+- `model_used` - LLM model used for generation (single RAG only)
+
+## Pricing Configuration
+
+Tracks the cost configuration for different models:
+
+```json
+{
+  "pricing_config": {
+    "openai_models": {
+      "gpt-4o": {
+        "input_rate_per_1m": 2.5,
+        "output_rate_per_1m": 10.0,
+        "pricing_source_url": "https://developers.openai.com/api/pricing/",
+        "pricing_updated_at": "2026-03-11"
+      }
+    },
+    "huggingface_endpoints": {
+      "medgemma": {
+        "cloud_provider": "aws",
+        "instance_family": "nvidia-A10G",
+        "hourly_rate_usd": 1.8,
+        "allocation_mode": "runtime_proportional"
+      }
+    }
+  }
+}
+```
+
+<Note>
+Pricing data is automatically captured from `src/common/pricing.py` and helps you understand the cost implications of different model choices.
+</Note>
+
+## Summary Section
+
+Contains aggregated metrics and performance statistics:
+
+```json
+{
+  "summary": {
+    "simple": {
+      "rag_name": "Simple Semantic RAG",
+      "metrics": {
+        "faithfulness": 0.8503661560317907,
+        "answer_relevancy": 0.26467160516971017,
+        "context_precision": 0.7788888888660509,
+        "context_recall": 0.6
+      },
+      "performance": {
+        "average_execution_time": 11.316,
+        "total_input_tokens": 9348,
+        "total_output_tokens": 5120,
+        "total_cost": 0.031433,
+        "average_cost_per_question": 0.003143,
+        "overall_average_score": 0.623
+      }
+    }
+  }
+}
+```
+
+### Metrics Analysis
+
+<CardGroup cols={2}>
+  <Card title="Faithfulness: 0.850" icon="check-circle">
+    **Excellent** - Answers are well-grounded in retrieved context with minimal hallucination
+  </Card>
+  
+  <Card title="Answer Relevancy: 0.265" icon="exclamation-triangle">
+    **Poor** - Answers may not directly address the questions asked
+  </Card>
+  
+  <Card title="Context Precision: 0.779" icon="bullseye">
+    **Good** - Retrieval is mostly pulling relevant information
+  </Card>
+  
+  <Card title="Context Recall: 0.600" icon="list-check">
+    **Fair** - Some relevant information may be missing from retrieval
+  </Card>
+</CardGroup>
+
+### Performance Analysis
+
+```json
+"performance": {
+  "average_execution_time": 11.316,      // seconds per question
+  "total_input_tokens": 9348,            // total tokens sent to LLM
+  "total_output_tokens": 5120,           // total tokens generated
+  "total_cost": 0.031433,                // total cost in USD
+  "average_cost_per_question": 0.003143, // cost per question
+  "overall_average_score": 0.623         // average of all 4 metrics
+}
+```
+
+<Tip>
+**Cost optimization insights:**
+- This evaluation cost $0.03 for 10 questions
+- Average $0.003 per question
+- At scale (1000 questions): ~$3.14
+- Consider cheaper models for high-volume use cases
+</Tip>
+
+## Question-by-Question Breakdown
+
+The most detailed section showing individual question performance:
+
+```json
+{
+  "question_by_question": [
+    {
+      "question_id": 1,
+      "question": "¿En qué momento y quien debe reevaluar el riesgo clínico...",
+      "ground_truth": "El Ginecobstetra en la semana 28 - 30 y semana 34 – 36.",
+      "rag_results": {
+        "simple": {
+          "answer": "<unused94>thought\n1. **Identify the core question:**...",
+          "contexts_count": 1,
+          "metrics": {
+            "faithfulness": 0.9,
+            "answer_relevancy": 0.0,
+            "context_precision": 0.7499999999625,
+            "context_recall": 0.0
+          },
+          "performance": {
+            "execution_time": 16.701202154159546,
+            "input_tokens": 920,
+            "output_tokens": 512,
+            "total_cost": 0.0046392228
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+### Analyzing Individual Questions
+
+<Steps>
+  <Step title="Identify Problem Questions">
+    Look for questions with low overall scores:
+    ```python
+    # Questions with avg score < 0.5 need investigation
+    problem_questions = [
+        q for q in results["question_by_question"]
+        if avg(q["rag_results"][rag_type]["metrics"].values()) < 0.5
+    ]
+    ```
+  </Step>
+  
+  <Step title="Examine the Answer">
+    Read the generated answer to understand what went wrong:
+    - Is it hallucinating?
+    - Is it off-topic?
+    - Is it incomplete?
+  </Step>
+  
+  <Step title="Check Retrieved Context">
+    The `contexts_count` shows how many chunks were retrieved:
+    - Too few contexts (1-2): May be missing information → **Low context recall**
+    - Too many contexts (5+): May include noise → **Low context precision**
+  </Step>
+  
+  <Step title="Compare to Ground Truth">
+    Compare the answer to the ground truth to understand the gap:
+    ```json
+    "ground_truth": "El Ginecobstetra en la semana 28 - 30 y semana 34 – 36."
+    ```
+  </Step>
+</Steps>
+
+### Example Analysis: Question #1
+
+```json
+"metrics": {
+  "faithfulness": 0.9,           // ✅ Good - not hallucinating
+  "answer_relevancy": 0.0,       // ❌ Problem - answer doesn't address question
+  "context_precision": 0.75,     // ✅ Good - retrieved relevant context
+  "context_recall": 0.0          // ❌ Problem - missing necessary information
+}
+```
+
+**Diagnosis:**
+- The system retrieved **relevant** context (precision 0.75)
+- But it didn't retrieve **all necessary** context (recall 0.0)
+- The answer is faithful to what was retrieved (faithfulness 0.9)
+- However, the answer doesn't actually answer the question (relevancy 0.0)
+
+**Root Cause:**
+- Only 1 context chunk was retrieved (`contexts_count: 1`)
+- The retrieved chunk didn't contain the specific answer
+- The LLM couldn't answer based on incomplete information
+
+**Fix:**
+- Increase retrieval count (k) from default to higher value
+- Improve embedding quality for this type of question
+- Consider using a more advanced RAG architecture (hybrid, rewriter)
+
+## Comparing Across RAG Architectures
+
+For multi-RAG evaluations, compare performance side-by-side:
+
+```json
+{
+  "question_id": 1,
+  "question": "¿En qué momento y quien debe reevaluar...",
+  "rag_results": {
+    "simple": {
+      "metrics": {
+        "faithfulness": 0.9,
+        "answer_relevancy": 0.0,
+        "context_precision": 0.75,
+        "context_recall": 0.0
+      }
+    },
+    "hybrid": {
+      "metrics": {
+        "faithfulness": 0.95,
+        "answer_relevancy": 0.85,
+        "context_precision": 0.88,
+        "context_recall": 0.90
+      }
+    }
+  }
+}
+```
+
+<Card title="Analysis" icon="chart-column">
+  **Hybrid RAG significantly outperforms Simple RAG:**
+  - Better retrieval (precision 0.88 vs 0.75, recall 0.90 vs 0.0)
+  - More relevant answers (relevancy 0.85 vs 0.0)
+  - Maintains faithfulness (0.95 vs 0.9)
+  
+  **Recommendation:** Use Hybrid RAG for production
+</Card>
+
+## Best Performers Analysis
+
+For comprehensive evaluations, the results include a `best_performers` section:
+
+```json
+{
+  "best_performers": {
+    "faithfulness": {
+      "rag_type": "hybrid-rrf",
+      "rag_name": "Hybrid RAG + RRF (BM25 + Semantic)",
+      "score": 0.924
+    },
+    "answer_relevancy": {
+      "rag_type": "rewriter",
+      "rag_name": "Rewriter RAG (Multi-Query)",
+      "score": 0.887
+    },
+    "best_avg_execution_time": {
+      "rag_type": "simple",
+      "rag_name": "Simple Semantic RAG",
+      "score": 8.234
+    },
+    "best_total_cost": {
+      "rag_type": "simple",
+      "rag_name": "Simple Semantic RAG",
+      "score": 0.021
+    }
+  }
+}
+```
+
+### Trade-offs Analysis
+
+<CardGroup cols={2}>
+  <Card title="Quality" icon="star">
+    **Best: Hybrid-RRF & Rewriter**
+    - Highest accuracy metrics
+    - Best retrieval quality
+    - Most relevant answers
+    
+    **Trade-off:** Higher cost and latency
+  </Card>
+  
+  <Card title="Performance" icon="gauge">
+    **Best: Simple Semantic**
+    - Fastest execution (8.2s)
+    - Lowest cost ($0.021)
+    - Simplest architecture
+    
+    **Trade-off:** Lower quality metrics
+  </Card>
+</CardGroup>
+
+## Actionable Insights
+
+### Low Faithfulness
+
+<AccordionGroup>
+  <Accordion title="Symptoms">
+    - Generated answers contain information not in the retrieved context
+    - LLM is hallucinating or using prior knowledge
+  </Accordion>
+  
+  <Accordion title="Solutions">
+    1. **Improve prompts**: Add explicit instructions to only use retrieved context
+    2. **Use better models**: Some models are better at staying grounded
+    3. **Add citations**: Require the LLM to cite which chunks support each claim
+    4. **Post-processing**: Filter out unsupported claims
+  </Accordion>
+</AccordionGroup>
+
+### Low Answer Relevancy
+
+<AccordionGroup>
+  <Accordion title="Symptoms">
+    - Answers don't directly address the question
+    - Responses are too general or off-topic
+  </Accordion>
+  
+  <Accordion title="Solutions">
+    1. **Refine prompts**: Make answer format more specific
+    2. **Better retrieval**: Ensure retrieved context is relevant to the question
+    3. **Query preprocessing**: Rephrase questions for better retrieval
+    4. **Use query-focused RAG**: Try Rewriter or HyDE architectures
+  </Accordion>
+</AccordionGroup>
+
+### Low Context Precision
+
+<AccordionGroup>
+  <Accordion title="Symptoms">
+    - Retrieved chunks contain irrelevant information
+    - Too much noise in the context
+  </Accordion>
+  
+  <Accordion title="Solutions">
+    1. **Increase similarity threshold**: Only retrieve highly relevant chunks
+    2. **Add reranking**: Use a reranker to filter retrieved chunks
+    3. **Better embeddings**: Use domain-specific embedding models
+    4. **Try hybrid search**: Combine BM25 + semantic search
+  </Accordion>
+</AccordionGroup>
+
+### Low Context Recall
+
+<AccordionGroup>
+  <Accordion title="Symptoms">
+    - Important information is missing from retrieved context
+    - Answers are incomplete
+  </Accordion>
+  
+  <Accordion title="Solutions">
+    1. **Retrieve more chunks**: Increase k (e.g., from 5 to 10)
+    2. **Better chunking**: Ensure chunks contain complete information
+    3. **Multi-query retrieval**: Try Rewriter RAG for diverse retrieval
+    4. **Check embeddings**: Ensure embedding model captures domain semantics
+  </Accordion>
+</AccordionGroup>
+
+## Visualization Examples
+
+While the project saves results as JSON, you can create visualizations:
+
+```python
+import json
+import matplotlib.pyplot as plt
+
+# Load results
+with open('results/ragas_evaluation_hybrid_20260311_095023.json') as f:
+    results = json.load(f)
+
+# Extract metrics
+metrics = results['summary']['hybrid']['metrics']
+
+# Create bar chart
+plt.bar(metrics.keys(), metrics.values())
+plt.xlabel('Metrics')
+plt.ylabel('Score')
+plt.title('Hybrid RAG Performance')
+plt.ylim(0, 1)
+plt.axhline(y=0.8, color='g', linestyle='--', label='Excellent')
+plt.axhline(y=0.6, color='orange', linestyle='--', label='Good')
+plt.legend()
+plt.tight_layout()
+plt.savefig('hybrid_rag_metrics.png')
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RAGAS Metrics" icon="chart-line" href="/evaluation/ragas-metrics">
+    Learn more about what each metric measures
+  </Card>
+  <Card title="Benchmarking" icon="gauge" href="/evaluation/benchmarking">
+    Best practices for comprehensive RAG benchmarking
+  </Card>
+</CardGroup>

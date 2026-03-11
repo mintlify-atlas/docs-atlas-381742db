@@ -1,0 +1,328 @@
+---
+title: PageIndex RAG
+description: RAG pipeline using PageIndex retrieval API for document search
+---
+
+## Overview
+
+The PageIndex RAG module implements a RAG pipeline using the PageIndex retrieval API. Unlike the other RAG modules that use local vector stores, this module leverages PageIndex's cloud-based document retrieval service.
+
+**Module:** `src.rag.pageindex`
+
+**Source:** `src/rag/pageindex.py`
+
+## Configuration
+
+### Environment Variables
+
+Required environment variables in `.env`:
+
+```bash
+PAGEINDEX_API_KEY=your_api_key
+PAGEINDEX_DOC_ID=pi-xxxx  # Your indexed document ID
+OPENAI_API_KEY=your_openai_key
+```
+
+### Default Models
+
+```python
+pageindex_client = PageIndexClient(api_key=os.getenv("PAGEINDEX_API_KEY"))
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+### Prompt Template
+
+Uses the standard medical expert prompt (same as Simple RAG).
+
+## Core Functions
+
+### _wait_for_retrieval_completion
+
+```python
+def _wait_for_retrieval_completion(
+    retrieval_id: str,
+    timeout_seconds: int = 120,
+    poll_interval_seconds: float = 2.0
+) -> Dict[str, Any]
+```
+
+Polls PageIndex retrieval endpoint until completion or timeout.
+
+<ParamField path="retrieval_id" type="str" required>
+  The retrieval ID returned from PageIndex submit_query
+</ParamField>
+
+<ParamField path="timeout_seconds" type="int" default="120">
+  Maximum wait time for retrieval completion
+</ParamField>
+
+<ParamField path="poll_interval_seconds" type="float" default="2.0">
+  Poll interval for checking retrieval status
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Complete retrieval result from PageIndex API
+</ResponseField>
+
+**Raises:**
+- `RuntimeError`: If retrieval status is "failed" or "error"
+- `TimeoutError`: If timeout is reached before completion
+
+### _extract_contexts_from_retrieval
+
+```python
+def _extract_contexts_from_retrieval(retrieval_result: Dict[str, Any]) -> List[str]
+```
+
+Converts PageIndex retrieval payload into the List[str] context format expected by RAGAS.
+
+<ParamField path="retrieval_result" type="Dict[str, Any]" required>
+  The retrieval result from PageIndex API
+</ParamField>
+
+<ResponseField name="return" type="List[str]">
+  List of formatted context strings, each containing:
+  - Title of the retrieved node
+  - Top 2 relevant content snippets
+</ResponseField>
+
+### _format_contexts
+
+```python
+def _format_contexts(contexts: List[str]) -> str
+```
+
+Formats contexts into a prompt-ready block.
+
+<ParamField path="contexts" type="List[str]" required>
+  List of context strings to format
+</ParamField>
+
+<ResponseField name="return" type="str">
+  Formatted string with numbered documents
+</ResponseField>
+
+### process_pageindex_query
+
+```python
+def process_pageindex_query(
+    query: str,
+    custom_llm: Optional[ChatOpenAI] = None,
+    doc_id: Optional[str] = None,
+    thinking: bool = False,
+    timeout_seconds: int = 120,
+    poll_interval_seconds: float = 2.0
+) -> Dict[str, Any]
+```
+
+Processes a query with PageIndex retrieval and OpenAI answer synthesis.
+
+<ParamField path="query" type="str" required>
+  User question
+</ParamField>
+
+<ParamField path="custom_llm" type="ChatOpenAI" default="None">
+  Optional custom answer model. Defaults to gpt-4o with temperature=0
+</ParamField>
+
+<ParamField path="doc_id" type="str" default="None">
+  Optional PageIndex document id. If None, uses PAGEINDEX_DOC_ID from .env
+</ParamField>
+
+<ParamField path="thinking" type="bool" default="False">
+  Whether to enable PageIndex deeper retrieval mode
+</ParamField>
+
+<ParamField path="timeout_seconds" type="int" default="120">
+  Max wait time for retrieval completion
+</ParamField>
+
+<ParamField path="poll_interval_seconds" type="float" default="2.0">
+  Poll interval for retrieval status
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Dictionary containing:
+  - `answer` (str): Generated answer
+  - `contexts` (List[str]): Extracted context strings
+  - `retrieved_nodes` (List[dict]): Full PageIndex retrieval nodes
+  - `retrieval_result` (dict): Complete PageIndex API response
+  - `metrics` (dict):
+    - `input_tokens` (int): Input tokens for answer generation
+    - `output_tokens` (int): Output tokens generated
+    - `total_tokens` (int): Total tokens
+    - `usage_source` (str): Source of usage data
+    - `cost` (float): Cost in USD
+    - `cost_source` (str): Source of cost calculation
+    - `retrieval_id` (str): PageIndex retrieval ID
+    - `doc_id` (str): PageIndex document ID used
+</ResponseField>
+
+### query_for_evaluation
+
+```python
+def query_for_evaluation(
+    question: str,
+    llm_model: Optional[str] = None,
+    doc_id: Optional[str] = None,
+    custom_llm: Optional[ChatOpenAI] = None,
+    thinking: bool = False
+) -> Dict[str, Any]
+```
+
+Wrapper function compatible with the benchmark evaluator contract.
+
+<ParamField path="question" type="str" required>
+  The question to process
+</ParamField>
+
+<ParamField path="llm_model" type="str" default="None">
+  Optional model name for answer generation. Defaults to "gpt-4o"
+</ParamField>
+
+<ParamField path="doc_id" type="str" default="None">
+  Optional PageIndex document id to override PAGEINDEX_DOC_ID
+</ParamField>
+
+<ParamField path="custom_llm" type="ChatOpenAI" default="None">
+  Optional custom LLM instance (takes precedence over llm_model)
+</ParamField>
+
+<ParamField path="thinking" type="bool" default="False">
+  Optional PageIndex retrieval mode for deeper analysis
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Dictionary containing:
+  - `question` (str): Original question
+  - `answer` (str): Generated answer
+  - `contexts` (List[str]): Retrieved context strings
+  - `source_documents` (List[dict]): PageIndex retrieved nodes
+  - `metadata` (dict): Comprehensive metadata including:
+    - `num_contexts` (int): Number of contexts
+    - `retrieval_method` (str): "pageindex"
+    - `llm_model` (str): Model name used
+    - `provider` (str): Provider name
+    - `model_id` (str): Full model ID
+    - `execution_time` (float): Total execution time
+    - `input_tokens` (int): Input tokens used
+    - `output_tokens` (int): Output tokens generated
+    - `total_cost` (float): Total cost in USD
+    - `tokens_used` (int): Total tokens
+    - `usage_source` (str): Usage data source
+    - `cost_source` (str): Cost calculation source
+    - `doc_id` (str): PageIndex document ID
+    - `retrieval_id` (str): PageIndex retrieval ID
+    - `pageindex_thinking` (bool): Whether thinking mode was enabled
+</ResponseField>
+
+## Usage Example
+
+```python
+from src.rag.pageindex import query_for_evaluation
+
+# Basic usage with default model
+result = query_for_evaluation(
+    question="¿Cuáles son los síntomas del embarazo?"
+)
+
+print(result["answer"])
+print(f"Retrieval method: {result['metadata']['retrieval_method']}")
+print(f"Cost: ${result['metadata']['total_cost']:.6f}")
+print(f"Retrieval ID: {result['metadata']['retrieval_id']}")
+
+# Using thinking mode for deeper retrieval
+result = query_for_evaluation(
+    question="¿Qué complicaciones puede tener la diabetes gestacional?",
+    thinking=True
+)
+
+# Using a custom document ID
+result = query_for_evaluation(
+    question="¿Cuándo se realizan las ecografías?",
+    doc_id="pi-custom-doc-id"
+)
+
+# Using a custom model
+from langchain_openai import ChatOpenAI
+
+custom_llm = ChatOpenAI(model_name="gpt-4o", temperature=0.2)
+result = query_for_evaluation(
+    question="¿Qué es el parto natural?",
+    custom_llm=custom_llm
+)
+```
+
+## Pipeline Flow
+
+1. **Submit Query**: Submits query to PageIndex API with document ID
+2. **Wait for Completion**: Polls retrieval status every 2 seconds (default) until complete
+3. **Extract Contexts**: Extracts relevant content snippets from PageIndex nodes
+4. **Format**: Formats contexts into numbered documents
+5. **Generate Answer**: Uses OpenAI LLM to generate answer based on contexts
+6. **Track**: Captures token usage, cost, and retrieval metadata
+
+## PageIndex Retrieval Modes
+
+### Standard Mode (thinking=False)
+
+```python
+result = query_for_evaluation(
+    question="question",
+    thinking=False
+)
+```
+
+Fast retrieval mode for straightforward queries.
+
+### Thinking Mode (thinking=True)
+
+```python
+result = query_for_evaluation(
+    question="question",
+    thinking=True
+)
+```
+
+Deeper analysis mode for complex queries. May take longer but provides more comprehensive results.
+
+## Error Handling
+
+The module handles several error conditions:
+
+```python
+# Missing API key
+if not os.getenv("PAGEINDEX_API_KEY"):
+    raise ValueError("PAGEINDEX_API_KEY not found in the .env file")
+
+# Missing document ID
+if not os.getenv("PAGEINDEX_DOC_ID"):
+    raise ValueError("PAGEINDEX_DOC_ID not found in the .env file")
+
+# Retrieval failure
+if status in ("failed", "error"):
+    raise RuntimeError(f"PageIndex retrieval failed: {retrieval}")
+
+# Timeout
+if time.time() > deadline:
+    raise TimeoutError(f"Timed out waiting for retrieval completion")
+```
+
+## Key Features
+
+- **Cloud-based retrieval**: Uses PageIndex API instead of local vector store
+- **Asynchronous polling**: Waits for retrieval completion with configurable timeout
+- **Thinking mode**: Optional deeper analysis for complex queries
+- **Flexible document selection**: Can override document ID per query
+- **Automatic context extraction**: Extracts top 2 snippets per node
+- **Full metadata tracking**: Includes retrieval ID and document ID in results
+- **Compatible interface**: Matches the contract of other RAG modules
+
+## When to Use PageIndex
+
+PageIndex RAG is ideal when:
+- You want to avoid managing local vector stores
+- Documents are already indexed in PageIndex
+- You need cloud-based, managed retrieval
+- You want to leverage PageIndex's advanced retrieval features
+- You need to query multiple document collections dynamically

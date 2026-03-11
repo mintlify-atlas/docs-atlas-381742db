@@ -1,0 +1,465 @@
+---
+title: "Pricing"
+description: "Centralized pricing resolution for LLM and SLM inference costs with support for token-based and endpoint-based billing"
+---
+
+## Overview
+
+The `pricing` module provides centralized cost calculation for both OpenAI token-based pricing and HuggingFace endpoint hourly pricing. It loads pricing configuration from JSON and resolves total costs using provider-reported costs when available, falling back to estimated calculations.
+
+## resolve_total_cost()
+
+Resolve total cost with callback-first and provider-specific fallbacks.
+
+### Signature
+
+```python
+def resolve_total_cost(
+    *,
+    provider: str,
+    model_name: str,
+    model_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    provider_reported_cost: Optional[float],
+    provider_cost_source: str,
+    execution_time_seconds: Optional[float] = None,
+) -> Dict[str, Any]
+```
+
+### Parameters
+
+<ParamField path="provider" type="str" required>
+  Provider type ("openai" or "huggingface")
+</ParamField>
+
+<ParamField path="model_name" type="str" required>
+  Short model name/key (e.g., "gpt-5", "mediphi")
+</ParamField>
+
+<ParamField path="model_id" type="str" required>
+  Full model identifier (e.g., "gpt-5", "microsoft/MediPhi-Instruct")
+</ParamField>
+
+<ParamField path="input_tokens" type="int" required>
+  Number of input/prompt tokens consumed
+</ParamField>
+
+<ParamField path="output_tokens" type="int" required>
+  Number of output/completion tokens generated
+</ParamField>
+
+<ParamField path="provider_reported_cost" type="Optional[float]" required>
+  Cost reported directly by provider API (if available)
+</ParamField>
+
+<ParamField path="provider_cost_source" type="str" required>
+  Source of provider-reported cost for traceability
+</ParamField>
+
+<ParamField path="execution_time_seconds" type="Optional[float]">
+  Execution time in seconds (used for HuggingFace endpoint pricing)
+</ParamField>
+
+### Returns
+
+<ResponseField name="cost_data" type="Dict[str, Any]">
+  Dictionary containing:
+  - `total_cost` (float): Total cost in USD, rounded to 10 decimal places
+  - `cost_source` (str): Source of cost calculation
+  - `pricing_context` (dict): Detailed pricing metadata
+</ResponseField>
+
+### Cost Resolution Priority
+
+1. **Provider-reported cost**: If `provider_reported_cost` is provided and > 0, uses it directly
+2. **OpenAI token-based estimation**: For "openai" provider, calculates from token counts and rates
+3. **HuggingFace endpoint estimation**: For "huggingface" provider, calculates from execution time and hourly rates
+4. **Missing**: Returns 0.0 cost if no pricing information available
+
+### Cost Sources
+
+- `provider_reported`: Direct cost from provider API
+- `estimated_openai_token_pricing`: Calculated from OpenAI token rates
+- `estimated_hf_endpoint_pricing`: Calculated from HuggingFace endpoint hourly rates
+- `missing`: No pricing information available
+
+### Example
+
+```python
+from src.common.pricing import resolve_total_cost
+from src.common.usage_metrics import extract_usage_from_ai_message, extract_cost_from_ai_message
+
+# After getting a response from LLM
+usage = extract_usage_from_ai_message(message)
+cost_info = extract_cost_from_ai_message(message)
+
+# Resolve total cost
+result = resolve_total_cost(
+    provider="openai",
+    model_name="gpt-5",
+    model_id="gpt-5",
+    input_tokens=usage["input_tokens"],
+    output_tokens=usage["output_tokens"],
+    provider_reported_cost=cost_info["total_cost"],
+    provider_cost_source=cost_info["cost_source"],
+)
+
+print(f"Total cost: ${result['total_cost']:.6f}")
+print(f"Cost source: {result['cost_source']}")
+print(f"Pricing method: {result['pricing_context']['pricing_method']}")
+```
+
+## OpenAI Token-Based Pricing
+
+### Calculation Formula
+
+```python
+input_cost = (input_tokens / 1_000_000) * input_rate_per_1m
+output_cost = (output_tokens / 1_000_000) * output_rate_per_1m
+total_cost = input_cost + output_cost
+```
+
+### Pricing Context (Token-Based)
+
+<ResponseField name="pricing_method" type="str">
+  Always "token_based" for OpenAI models
+</ResponseField>
+
+<ResponseField name="input_rate_per_1m" type="float">
+  Input token rate per 1 million tokens (USD)
+</ResponseField>
+
+<ResponseField name="output_rate_per_1m" type="float">
+  Output token rate per 1 million tokens (USD)
+</ResponseField>
+
+<ResponseField name="input_tokens" type="int">
+  Number of input tokens consumed
+</ResponseField>
+
+<ResponseField name="output_tokens" type="int">
+  Number of output tokens generated
+</ResponseField>
+
+<ResponseField name="input_cost" type="float">
+  Cost of input tokens (USD, rounded to 10 decimals)
+</ResponseField>
+
+<ResponseField name="output_cost" type="float">
+  Cost of output tokens (USD, rounded to 10 decimals)
+</ResponseField>
+
+### Example Configuration (pricing.json)
+
+```json
+{
+  "openai_token_pricing_per_1m": {
+    "gpt-5": {
+      "input": 2.50,
+      "output": 10.00,
+      "pricing_source_url": "https://openai.com/api/pricing/",
+      "pricing_updated_at": "2024-01-15"
+    },
+    "gpt-5.2": {
+      "input": 1.25,
+      "output": 5.00,
+      "pricing_source_url": "https://openai.com/api/pricing/",
+      "pricing_updated_at": "2024-01-15"
+    }
+  }
+}
+```
+
+## HuggingFace Endpoint Pricing
+
+### Allocation Modes
+
+Two allocation modes are supported:
+
+1. **runtime_proportional** (default): Cost based on actual execution time
+2. **amortized_window**: Cost amortized over a time window and query count
+
+### Runtime Proportional Calculation
+
+```python
+total_cost = hourly_rate * replicas * (execution_time_seconds / 3600)
+```
+
+### Amortized Window Calculation
+
+```python
+total_cost = (hourly_rate * replicas * active_hours_window) / processed_queries_window
+```
+
+### Pricing Context (Endpoint Hourly)
+
+<ResponseField name="pricing_method" type="str">
+  Always "endpoint_hourly" for HuggingFace models
+</ResponseField>
+
+<ResponseField name="cloud_provider" type="str">
+  Cloud provider (e.g., "aws", "gcp", "azure")
+</ResponseField>
+
+<ResponseField name="instance_family" type="str">
+  Instance family (e.g., "p4d", "g5")
+</ResponseField>
+
+<ResponseField name="instance_size" type="str">
+  Instance size (e.g., "24xlarge", "12xlarge")
+</ResponseField>
+
+<ResponseField name="accelerator" type="str">
+  GPU accelerator type (e.g., "A100", "A10G")
+</ResponseField>
+
+<ResponseField name="gpu_count" type="int">
+  Number of GPUs per instance
+</ResponseField>
+
+<ResponseField name="vram_gb" type="float">
+  GPU VRAM in GB per GPU
+</ResponseField>
+
+<ResponseField name="hourly_rate_usd_per_replica" type="float">
+  Hourly rate in USD per replica
+</ResponseField>
+
+<ResponseField name="replicas" type="int">
+  Number of endpoint replicas
+</ResponseField>
+
+<ResponseField name="allocation_mode" type="str">
+  Either "runtime_proportional" or "amortized_window"
+</ResponseField>
+
+<ResponseField name="execution_time_seconds" type="float">
+  Execution time in seconds (runtime_proportional mode only)
+</ResponseField>
+
+<ResponseField name="active_hours_window" type="float">
+  Total active hours in window (amortized_window mode only)
+</ResponseField>
+
+<ResponseField name="processed_queries_window" type="int">
+  Total queries processed in window (amortized_window mode only)
+</ResponseField>
+
+<ResponseField name="pricing_source_url" type="str">
+  URL to pricing documentation
+</ResponseField>
+
+<ResponseField name="pricing_updated_at" type="str">
+  Date when pricing was last updated
+</ResponseField>
+
+### Example Configuration (pricing.json)
+
+```json
+{
+  "huggingface_endpoints": {
+    "mediphi": {
+      "cloud_provider": "aws",
+      "instance_family": "g5",
+      "instance_size": "12xlarge",
+      "accelerator": "A10G",
+      "gpu_count": 4,
+      "vram_gb": 24,
+      "hourly_rate_usd": 7.09,
+      "replicas": 1,
+      "allocation_mode": "runtime_proportional",
+      "pricing_source_url": "https://aws.amazon.com/ec2/instance-types/g5/",
+      "pricing_updated_at": "2024-01-15"
+    },
+    "medgemma": {
+      "cloud_provider": "aws",
+      "instance_family": "g5",
+      "instance_size": "2xlarge",
+      "accelerator": "A10G",
+      "gpu_count": 1,
+      "vram_gb": 24,
+      "hourly_rate_usd": 1.21,
+      "replicas": 1,
+      "allocation_mode": "amortized_window",
+      "active_hours_window": 24.0,
+      "processed_queries_window": 1000,
+      "pricing_source_url": "https://aws.amazon.com/ec2/instance-types/g5/",
+      "pricing_updated_at": "2024-01-15"
+    }
+  }
+}
+```
+
+## get_pricing_config_summary()
+
+Generate a summary of pricing configuration for documentation and traceability.
+
+### Signature
+
+```python
+def get_pricing_config_summary() -> Dict[str, Any]
+```
+
+### Returns
+
+<ResponseField name="summary" type="Dict[str, Any]">
+  Dictionary containing:
+  - `openai_models`: Dict of OpenAI model pricing configurations
+  - `huggingface_endpoints`: Dict of HuggingFace endpoint configurations
+</ResponseField>
+
+### Example
+
+```python
+from src.common.pricing import get_pricing_config_summary
+import json
+
+summary = get_pricing_config_summary()
+print(json.dumps(summary, indent=2))
+
+# Output:
+# {
+#   "openai_models": {
+#     "gpt-5": {
+#       "input_rate_per_1m": 2.5,
+#       "output_rate_per_1m": 10.0,
+#       "pricing_source_url": "https://openai.com/api/pricing/",
+#       "pricing_updated_at": "2024-01-15"
+#     }
+#   },
+#   "huggingface_endpoints": {
+#     "mediphi": {
+#       "cloud_provider": "aws",
+#       "instance_family": "g5",
+#       "hourly_rate_usd": 7.09,
+#       ...
+#     }
+#   }
+# }
+```
+
+## load_pricing_config()
+
+Load pricing configuration from JSON file with safe defaults.
+
+### Signature
+
+```python
+def load_pricing_config() -> Dict[str, Any]
+```
+
+### Returns
+
+<ResponseField name="config" type="Dict[str, Any]">
+  Pricing configuration dictionary, or empty dict if file not found or invalid
+</ResponseField>
+
+### Configuration File Location
+
+1. If `PRICING_CONFIG_PATH` environment variable is set, uses that path
+2. Otherwise uses default: `{PROJECT_ROOT}/config/pricing.json`
+
+### Error Handling
+
+- Returns empty dict `{}` if file doesn't exist
+- Returns empty dict `{}` if file has invalid JSON
+- Never raises exceptions - always returns a valid dict
+
+## Configuration File Structure
+
+### Complete Example
+
+```json
+{
+  "openai_token_pricing_per_1m": {
+    "gpt-5": {
+      "input": 2.50,
+      "output": 10.00,
+      "pricing_source_url": "https://openai.com/api/pricing/",
+      "pricing_updated_at": "2024-01-15"
+    },
+    "gpt-5.2": {
+      "input": 1.25,
+      "output": 5.00,
+      "pricing_source_url": "https://openai.com/api/pricing/",
+      "pricing_updated_at": "2024-01-15"
+    }
+  },
+  "huggingface_endpoints": {
+    "mediphi": {
+      "cloud_provider": "aws",
+      "instance_family": "g5",
+      "instance_size": "12xlarge",
+      "accelerator": "A10G",
+      "gpu_count": 4,
+      "vram_gb": 24,
+      "hourly_rate_usd": 7.09,
+      "replicas": 1,
+      "allocation_mode": "runtime_proportional",
+      "pricing_source_url": "https://aws.amazon.com/ec2/instance-types/g5/",
+      "pricing_updated_at": "2024-01-15"
+    },
+    "medgemma": {
+      "cloud_provider": "aws",
+      "instance_family": "g5",
+      "instance_size": "2xlarge",
+      "accelerator": "A10G",
+      "gpu_count": 1,
+      "vram_gb": 24,
+      "hourly_rate_usd": 1.21,
+      "replicas": 1,
+      "allocation_mode": "amortized_window",
+      "active_hours_window": 24.0,
+      "processed_queries_window": 1000,
+      "pricing_source_url": "https://aws.amazon.com/ec2/instance-types/g5/",
+      "pricing_updated_at": "2024-01-15"
+    }
+  }
+}
+```
+
+## Usage Example
+
+### Complete Cost Tracking Workflow
+
+```python
+from src.common.model_provider import create_llm, get_model_identity, MODELS_REGISTRY
+from src.common.usage_metrics import extract_usage_from_ai_message, extract_cost_from_ai_message
+from src.common.pricing import resolve_total_cost
+import time
+
+# Create LLM
+config = MODELS_REGISTRY["gpt-5"]
+llm = create_llm(config)
+
+# Get model identity
+identity = get_model_identity(model_name="gpt-5", llm=llm)
+
+# Make inference call
+start_time = time.time()
+message = llm.invoke("Explain the pathophysiology of preeclampsia.")
+execution_time = time.time() - start_time
+
+# Extract usage and cost
+usage = extract_usage_from_ai_message(message)
+cost_info = extract_cost_from_ai_message(message)
+
+# Resolve total cost
+cost_result = resolve_total_cost(
+    provider=identity["provider"],
+    model_name=identity["model_name"],
+    model_id=identity["model_id"],
+    input_tokens=usage["input_tokens"],
+    output_tokens=usage["output_tokens"],
+    provider_reported_cost=cost_info["total_cost"],
+    provider_cost_source=cost_info["cost_source"],
+    execution_time_seconds=execution_time,
+)
+
+print(f"Model: {identity['model_name']}")
+print(f"Tokens: {usage['input_tokens']} in / {usage['output_tokens']} out")
+print(f"Cost: ${cost_result['total_cost']:.6f}")
+print(f"Cost source: {cost_result['cost_source']}")
+print(f"Execution time: {execution_time:.2f}s")
+```

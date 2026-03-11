@@ -1,0 +1,393 @@
+---
+title: Installation
+description: Complete installation guide for the Obstetrics RAG Benchmark
+---
+
+This guide provides detailed installation instructions for setting up the Obstetrics RAG Benchmark on your local machine.
+
+## Prerequisites
+
+Before installing, ensure your system meets these requirements:
+
+### System Requirements
+
+- **Operating System**: Linux, macOS, or Windows with WSL2
+- **Python**: Version 3.8 or higher
+- **Git**: For repository cloning
+- **Internet Connection**: Required for API calls and package installation
+
+### API Requirements
+
+<Note>
+You'll need an OpenAI API key to run evaluations. The benchmark uses:
+- **text-embedding-3-small** for creating document embeddings
+- **GPT-4o** (default) or other OpenAI models for answer generation
+</Note>
+
+Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys).
+
+## Installation steps
+
+<Steps>
+
+### Verify Python installation
+
+Check that Python 3.8+ is installed:
+
+```bash
+python --version
+# or
+python3 --version
+```
+
+Expected output: `Python 3.8.x` or higher
+
+<Warning>
+If Python is not installed or the version is below 3.8, download and install it from [python.org](https://www.python.org/downloads/).
+</Warning>
+
+### Clone the repository
+
+Clone the benchmark repository to your local machine:
+
+```bash
+git clone https://github.com/NicolasHoyosDevs/RAG-Benchmark.git
+cd RAG-Benchmark
+```
+
+### Create a virtual environment (recommended)
+
+It's recommended to use a virtual environment to isolate dependencies:
+
+<CodeGroup>
+
+```bash Linux/macOS
+python -m venv venv
+source venv/bin/activate
+```
+
+```bash Windows
+python -m venv venv
+venv\Scripts\activate
+```
+
+</CodeGroup>
+
+You should see `(venv)` appear in your terminal prompt.
+
+### Install dependencies
+
+Install all required Python packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+#### Key dependencies installed
+
+The `requirements.txt` includes:
+
+```txt requirements.txt
+# LangChain Ecosystem
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-chroma>=0.1.0
+langchain-openai>=0.1.0
+
+# LLM & API
+openai>=1.0.0
+tiktoken>=0.5.0
+
+# Vector Database & Retrieval
+chromadb>=0.4.0
+rank-bm25>=0.2.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.20.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+tqdm>=4.60.0
+
+# Evaluation
+ragas>=0.2.15,<0.3
+datasets>=2.15.0
+evaluate>=0.4.0
+```
+
+### Configure environment variables
+
+Create a `.env` file in the project root directory:
+
+```bash
+cp .env.example .env
+```
+
+Edit the `.env` file and add your API keys:
+
+```bash .env
+# OpenAI API configuration (Required)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Optional: HuggingFace models configuration
+# Only needed for specialized medical models
+HF_TOKEN=your_huggingface_token_here
+MEDIPHI_ENDPOINT_URL=https://your_mediphi_endpoint_url
+MEDGEMMA_ENDPOINT_URL=https://your_medgemma_endpoint_url
+
+# Optional: PageIndex configuration
+PAGEINDEX_API_KEY=your_pageindex_api_key_here
+PAGEINDEX_DOC_ID=your_pageindex_doc_id_here
+```
+
+<Note>
+**Required**: Only `OPENAI_API_KEY` is required for basic usage. Other API keys are optional and only needed if you plan to use specialized medical models or PageIndex RAG.
+</Note>
+
+### Verify project structure
+
+Ensure the project structure is correct:
+
+```bash
+ls -la
+```
+
+You should see:
+
+```
+RAG-Benchmark/
+├── src/
+│   ├── rag/                     # RAG implementations
+│   ├── evaluation/              # RAGAS orchestration
+│   └── common/                  # Shared utilities
+├── scripts/
+│   ├── create_embeddings.py     # Embedding generation
+│   └── run_evaluation.py        # Evaluation CLI
+├── data/
+│   ├── chunks/                  # Pre-chunked documents
+│   └── embeddings/              # Vector database storage
+├── results/                     # Evaluation outputs
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Environment template
+└── README.md
+```
+
+### Create embeddings database
+
+Generate embeddings for the obstetrics medical corpus:
+
+```bash
+python scripts/create_embeddings.py
+```
+
+**What this does:**
+
+1. Loads pre-chunked medical documents from `data/chunks/chunks_final.json`
+2. Generates embeddings using OpenAI's `text-embedding-3-small` model
+3. Stores vectors in ChromaDB at `data/embeddings/chroma_db/`
+
+**Expected output:**
+
+```
+=== STARTING EMBEDDING CREATION PROCESS ===
+Loading chunks from: /path/to/data/chunks/chunks_final.json
+Successfully loaded 150 chunks.
+Initializing OpenAI embeddings model...
+Creating and storing vector database at: /path/to/data/embeddings/chroma_db
+Collection: guia_embarazo_parto
+
+Embeddings created and stored successfully!
+Total vectors in database: 150
+Database saved at: /path/to/data/embeddings/chroma_db
+
+=== PROCESS COMPLETED ===
+```
+
+<Note>
+The embedding creation process typically takes 1-2 minutes. It only needs to be run once unless you modify the source documents.
+</Note>
+
+### Verify installation
+
+Run a test evaluation to verify everything is working:
+
+```bash
+python scripts/run_evaluation.py simple
+```
+
+If successful, you'll see evaluation results printed to the console and saved to the `results/` directory.
+
+</Steps>
+
+## Troubleshooting
+
+### Common issues and solutions
+
+<AccordionGroup>
+
+<Accordion title="ModuleNotFoundError: No module named 'langchain'">
+
+**Problem**: Dependencies not installed or wrong Python environment.
+
+**Solution**:
+```bash
+# Ensure virtual environment is activated
+source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate     # Windows
+
+# Reinstall dependencies
+pip install -r requirements.txt
+```
+
+</Accordion>
+
+<Accordion title="OpenAI API authentication error">
+
+**Problem**: Invalid or missing OpenAI API key.
+
+**Solution**:
+1. Verify your API key is correct in `.env`:
+   ```bash
+   cat .env | grep OPENAI_API_KEY
+   ```
+2. Ensure no extra spaces or quotes around the key
+3. Verify your OpenAI account has credits: [platform.openai.com/account/billing](https://platform.openai.com/account/billing)
+
+</Accordion>
+
+<Accordion title="ChromaDB connection error">
+
+**Problem**: Vector database not initialized or corrupted.
+
+**Solution**:
+1. Delete existing database:
+   ```bash
+   rm -rf data/embeddings/chroma_db
+   ```
+2. Recreate embeddings:
+   ```bash
+   python scripts/create_embeddings.py
+   ```
+
+</Accordion>
+
+<Accordion title="FileNotFoundError: chunks_final.json">
+
+**Problem**: Missing source data files.
+
+**Solution**:
+Ensure you cloned the complete repository:
+```bash
+ls data/chunks/chunks_final.json
+```
+
+If missing, re-clone the repository or check that Git LFS files downloaded correctly.
+
+</Accordion>
+
+<Accordion title="Python version compatibility issues">
+
+**Problem**: Using Python version below 3.8.
+
+**Solution**:
+1. Install Python 3.8+ from [python.org](https://www.python.org/downloads/)
+2. Create virtual environment with correct version:
+   ```bash
+   python3.8 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+</Accordion>
+
+<Accordion title="Rate limit errors from OpenAI API">
+
+**Problem**: Exceeding OpenAI API rate limits.
+
+**Solution**:
+- **Tier 1** accounts have lower rate limits
+- Wait a few minutes between evaluation runs
+- Consider upgrading your OpenAI account tier
+- For comprehensive evaluations, use `--debug` flag to see detailed progress
+
+</Accordion>
+
+</AccordionGroup>
+
+## Upgrading
+
+To upgrade to the latest version:
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Update dependencies
+pip install -r requirements.txt --upgrade
+
+# Recreate embeddings if data changed
+python scripts/create_embeddings.py
+```
+
+## Uninstallation
+
+To completely remove the project:
+
+```bash
+# Deactivate virtual environment
+deactivate
+
+# Remove project directory
+cd ..
+rm -rf RAG-Benchmark
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Run your first evaluation in 5 minutes
+</Card>
+
+<Card title="RAG Architectures" icon="diagram-project" href="/concepts/rag-architectures">
+  Learn about the different RAG strategies
+</Card>
+
+<Card title="Evaluation Guide" icon="chart-line" href="/evaluation/running-evaluations">
+  Understanding RAGAS metrics and results
+</Card>
+
+<Card title="API Reference" icon="code" href="/api/rag/simple">
+  Explore the Python API for custom workflows
+</Card>
+
+</CardGroup>
+
+## Getting help
+
+If you encounter issues not covered in this guide:
+
+- Check the [GitHub Issues](https://github.com/NicolasHoyosDevs/RAG-Benchmark/issues)
+- Review the [README](https://github.com/NicolasHoyosDevs/RAG-Benchmark#readme)
+- Open a new issue with:
+  - Your Python version (`python --version`)
+  - Full error message
+  - Steps to reproduce
+  - Your operating system
+
+## System requirements summary
+
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| **Python** | 3.8+ | Tested on 3.8, 3.9, 3.10, 3.11 |
+| **RAM** | 4GB minimum | 8GB+ recommended for large evaluations |
+| **Storage** | 500MB | For embeddings and results |
+| **OpenAI API** | Active account | With available credits |
+| **Internet** | Required | For API calls |
+
+<Note>
+**Estimated costs**: Running a single RAG evaluation with 10 questions typically costs $0.05-0.15 USD depending on the model used.
+</Note>

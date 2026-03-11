@@ -1,0 +1,525 @@
+---
+title: 'Customizing Evaluation Metrics'
+description: 'Extend RAGAS evaluation with custom metrics for domain-specific assessment'
+icon: 'sliders'
+---
+
+This guide explains how to customize and extend the evaluation framework with custom metrics tailored to medical domain assessment.
+
+## RAGAS Evaluation Framework
+
+The benchmark uses RAGAS (Retrieval-Augmented Generation Assessment) for automated, LLM-based evaluation. RAGAS provides four core metrics:
+
+- **Faithfulness**: Measures factual consistency between answer and context
+- **Answer Relevancy**: Assesses how well the answer addresses the question
+- **Context Precision**: Evaluates relevance of retrieved context
+- **Context Recall**: Measures completeness of retrieved information
+
+## Current Evaluation Configuration
+
+The evaluator is configured in `src/evaluation/ragas_evaluator.py:118-123`:
+
+```python
+class RAGASEvaluator:
+    def __init__(self, rag_type: str = "rewriter", debug: bool = False):
+        self.metrics = [
+            faithfulness,        # Answer faithfulness to context
+            answer_relevancy,    # Answer relevance to question
+            context_precision,   # Precision of retrieved contexts
+            context_recall       # Recall of necessary information
+        ]
+```
+
+## Adding Custom RAGAS Metrics
+
+RAGAS supports additional metrics that can be added to the evaluation:
+
+<Steps>
+  <Step title="Import Additional Metrics">
+    Add new metrics to the imports in `src/evaluation/ragas_evaluator.py`:
+    
+    ```python
+    from ragas.metrics import (
+        AspectCritic,
+        faithfulness,
+        answer_relevancy,
+        context_precision,
+        context_recall,
+        # Add these:
+        answer_correctness,
+        answer_similarity,
+        context_recall,
+        context_entity_recall,
+    )
+    ```
+  </Step>
+  
+  <Step title="Add Metrics to Evaluator">
+    Update the metrics list in `__init__`:
+    
+    ```python
+    def __init__(self, rag_type: str = "rewriter", debug: bool = False):
+        self.metrics = [
+            faithfulness,
+            answer_relevancy,
+            context_precision,
+            context_recall,
+            # New metrics:
+            answer_correctness,      # Semantic + factual correctness
+            answer_similarity,       # Similarity to ground truth
+            context_entity_recall,   # Entity coverage in context
+        ]
+```
+  </Step>
+  
+  <Step title="Update Result Processing">
+    Ensure new metrics are included in result extraction. The framework automatically handles this in `save_results()`, but verify in `display_results()`:
+    
+    ```python
+    def display_results(self, results):
+        # Metrics are automatically extracted by name
+        for metric in self.metrics:
+            metric_name = metric.name
+            # ... display logic
+    ```
+  </Step>
+  
+  <Step title="Run Evaluation">
+    Test with the new metrics:
+    
+    ```bash
+    python scripts/run_evaluation.py simple --debug
+    ```
+  </Step>
+</Steps>
+
+## Creating Custom Metrics
+
+### Medical-Specific Metric Example
+
+Let's create a custom metric for medical citation verification:
+
+<Steps>
+  <Step title="Define Custom Metric Class">
+    Create a new file `src/evaluation/custom_metrics.py`:
+    
+    ```python
+    """
+    Custom evaluation metrics for medical RAG systems.
+    """
+    from typing import List
+    from ragas.metrics.base import MetricWithLLM, SingleTurnMetric
+    from ragas.dataset_schema import SingleTurnSample
+    
+    class MedicalCitationAccuracy(MetricWithLLM, SingleTurnMetric):
+        """
+        Evaluates whether the answer includes proper medical citations
+        and whether cited sources are present in the retrieved context.
+        """
+        
+        name: str = "medical_citation_accuracy"
+        _required_columns: List[str] = ["response", "retrieved_contexts"]
+        
+        async def _single_turn_ascore(
+            self, sample: SingleTurnSample, callbacks
+        ) -> float:
+            """
+            Score the medical citation accuracy.
+            
+            Returns a score between 0 and 1:
+            - 1.0: All citations properly formatted and traceable
+            - 0.0: No citations or incorrect citations
+            """
+            response = sample.response
+            contexts = sample.retrieved_contexts
+            
+            # Check for citation markers (e.g., page numbers, source refs)
+            citation_markers = self._extract_citations(response)
+            
+            if not citation_markers:
+                return 0.0
+            
+            # Verify citations are traceable to contexts
+            verified_count = 0
+            for citation in citation_markers:
+                if self._verify_citation(citation, contexts):
+                    verified_count += 1
+            
+            return verified_count / len(citation_markers) if citation_markers else 0.0
+        
+        def _extract_citations(self, text: str) -> List[str]:
+            """Extract citation markers from text."""
+            import re
+            # Example: match patterns like "(Source: X, Page: Y)"
+            pattern = r"\(Source:\s*([^,]+),\s*Page:\s*(\d+)\)"
+            return re.findall(pattern, text)
+        
+        def _verify_citation(self, citation: tuple, contexts: List[str]) -> bool:
+            """Verify citation exists in retrieved contexts."""
+            source, page = citation
+            # Check if any context mentions this source and page
+            for context in contexts:
+                if source in context and str(page) in context:
+                    return True
+            return False
+        
+        def _single_turn_score(
+            self, sample: SingleTurnSample, callbacks=None
+        ) -> float:
+            """Synchronous version for fallback."""
+            import asyncio
+            return asyncio.run(self._single_turn_ascore(sample, callbacks))
+    ```
+  </Step>
+  
+  <Step title="Register Custom Metric">
+    Import and add to the evaluator in `src/evaluation/ragas_evaluator.py`:
+    
+    ```python
+    from src.evaluation.custom_metrics import MedicalCitationAccuracy
+    
+    def __init__(self, rag_type: str = "rewriter", debug: bool = False):
+        self.metrics = [
+            faithfulness,
+            answer_relevancy,
+            context_precision,
+            context_recall,
+            # Custom metric:
+            MedicalCitationAccuracy(),
+        ]
+    ```
+  </Step>
+  
+  <Step title="Test Custom Metric">
+    ```python
+    # Test the metric independently
+    from src.evaluation.custom_metrics import MedicalCitationAccuracy
+    from ragas.dataset_schema import SingleTurnSample
+    
+    metric = MedicalCitationAccuracy()
+    
+    sample = SingleTurnSample(
+        user_input="Test question",
+        response="Answer with citation (Source: guide.pdf, Page: 10)",
+        retrieved_contexts=[
+            "Content from guide.pdf page 10..."
+        ],
+    )
+    
+    score = metric._single_turn_score(sample)
+    print(f"Citation accuracy: {score}")
+    ```
+  </Step>
+</Steps>
+
+## Aspect-Based Evaluation
+
+RAGAS supports aspect-based evaluation using `AspectCritic` for domain-specific assessment:
+
+```python
+from ragas.metrics import AspectCritic
+
+# Define medical-specific aspects
+medical_accuracy = AspectCritic(
+    name="medical_accuracy",
+    definition="Evaluate if the medical information is accurate and follows clinical guidelines.",
+    llm=llm,  # Use a capable LLM for evaluation
+)
+
+patient_safety = AspectCritic(
+    name="patient_safety",
+    definition="Assess if the answer prioritizes patient safety and includes appropriate warnings.",
+    llm=llm,
+)
+
+# Add to evaluator
+self.metrics = [
+    faithfulness,
+    answer_relevancy,
+    context_precision,
+    context_recall,
+    medical_accuracy,
+    patient_safety,
+]
+```
+
+## Modifying Evaluation Logic
+
+### Custom Dataset Preparation
+
+Modify how queries are processed before evaluation in `ragas_evaluator.py:181-248`:
+
+```python
+def prepare_dataset(self, test_queries: List[Dict]) -> Dataset:
+    """Prepare RAGAS dataset with custom preprocessing."""
+    questions = []
+    answers = []
+    contexts = []
+    ground_truths = []
+    
+    for query_data in test_queries:
+        question = query_data["question"]
+        
+        # Custom preprocessing
+        question = self._preprocess_question(question)
+        
+        # Get RAG result
+        rag_result = self.query_function(question)
+        
+        # Custom post-processing
+        answer = self._postprocess_answer(rag_result["answer"])
+        contexts_list = self._postprocess_contexts(rag_result["contexts"])
+        
+        questions.append(question)
+        answers.append(answer)
+        contexts.append(contexts_list)
+        ground_truths.append(query_data.get("ground_truth", ""))
+    
+    return Dataset.from_dict({
+        "question": questions,
+        "answer": answers,
+        "contexts": contexts,
+        "ground_truth": ground_truths
+    })
+
+def _preprocess_question(self, question: str) -> str:
+    """Normalize or enhance question before processing."""
+    # Example: remove special characters, normalize spacing
+    return question.strip()
+
+def _postprocess_answer(self, answer: str) -> str:
+    """Clean or enhance answer before evaluation."""
+    return answer.strip()
+
+def _postprocess_contexts(self, contexts: List[str]) -> List[str]:
+    """Filter or reorder contexts before evaluation."""
+    # Example: remove duplicates
+    return list(dict.fromkeys(contexts))
+```
+
+## Domain-Specific Evaluation Considerations
+
+### Medical Q&A Specific Metrics
+
+For medical applications, consider these additional evaluation dimensions:
+
+<CardGroup cols={2}>
+  <Card title="Clinical Accuracy" icon="stethoscope">
+    Verify medical facts against clinical guidelines
+  </Card>
+  <Card title="Safety" icon="shield-check">
+    Ensure answers include appropriate warnings and contraindications
+  </Card>
+  <Card title="Clarity" icon="eye">
+    Assess if medical terminology is appropriately explained
+  </Card>
+  <Card title="Completeness" icon="list-check">
+    Check if all relevant factors are addressed
+  </Card>
+</CardGroup>
+
+### Example: Medical Safety Metric
+
+```python
+class MedicalSafetyScore(MetricWithLLM, SingleTurnMetric):
+    """
+    Evaluates if medical answers include necessary safety warnings.
+    """
+    
+    name: str = "medical_safety"
+    _required_columns: List[str] = ["user_input", "response"]
+    
+    async def _single_turn_ascore(
+        self, sample: SingleTurnSample, callbacks
+    ) -> float:
+        question = sample.user_input
+        answer = sample.response
+        
+        # Use LLM to evaluate safety considerations
+        evaluation_prompt = f"""
+        Evaluate the medical safety of this answer.
+        
+        Question: {question}
+        Answer: {answer}
+        
+        Does the answer include:
+        1. Appropriate warnings about risks?
+        2. Advice to consult healthcare professionals when needed?
+        3. Acknowledgment of limitations (e.g., "this is general information")?
+        
+        Rate from 0 (unsafe) to 1 (completely safe and appropriate).
+        Return only the numeric score.
+        """
+        
+        response = await self.llm.agenerate([evaluation_prompt])
+        score_text = response.generations[0][0].text.strip()
+        
+        try:
+            return float(score_text)
+        except ValueError:
+            return 0.0
+```
+
+## Output Format Customization
+
+### Custom Result Formatting
+
+Modify how results are saved in `ragas_evaluator.py:434-573`:
+
+```python
+def save_results(self, results, filename: str = None, 
+                return_data_only: bool = False, model_name: str = None):
+    """Save results with custom formatting."""
+    
+    # ... existing code ...
+    
+    # Add custom analysis
+    save_data["custom_analysis"] = {
+        "medical_specific_metrics": self._compute_medical_metrics(results),
+        "safety_assessment": self._assess_safety(results),
+        "recommendation": self._generate_recommendation(results)
+    }
+    
+    # Save to file
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(save_data, f, indent=2, ensure_ascii=False)
+
+def _compute_medical_metrics(self, results) -> dict:
+    """Compute domain-specific aggregations."""
+    return {
+        "avg_citation_accuracy": 0.95,
+        "safety_score": 0.98,
+    }
+
+def _assess_safety(self, results) -> dict:
+    """Assess overall safety of answers."""
+    return {
+        "status": "safe",
+        "warnings_included": 10,
+        "medical_disclaimers": 10,
+    }
+
+def _generate_recommendation(self, results) -> str:
+    """Generate human-readable recommendation."""
+    avg_score = sum(results.to_pandas().mean()) / 4
+    if avg_score > 0.8:
+        return "Excellent performance. Safe for research use."
+    elif avg_score > 0.6:
+        return "Good performance. Consider improvements before deployment."
+    else:
+        return "Needs improvement. Not recommended for clinical use."
+```
+
+## Evaluation Configuration
+
+### Run Configuration
+
+Customize RAGAS evaluation behavior in `ragas_evaluator.py:269`:
+
+```python
+def evaluate_rag(self, dataset: Dataset) -> Dict[str, Any]:
+    # Custom run configuration
+    run_config = RunConfig(
+        timeout=None,           # Disable timeout for complex metrics
+        max_workers=8,          # Parallel evaluation workers
+        max_retries=3,          # Retry failed evaluations
+        max_wait=60,           # Max wait between retries
+    )
+    
+    results = evaluate(
+        dataset=dataset,
+        metrics=self.metrics,
+        run_config=run_config,
+    )
+    
+    return results
+```
+
+## Testing Custom Metrics
+
+### Unit Tests
+
+```python
+# tests/test_custom_metrics.py
+import pytest
+from src.evaluation.custom_metrics import MedicalCitationAccuracy
+from ragas.dataset_schema import SingleTurnSample
+
+def test_citation_extraction():
+    """Test citation extraction logic."""
+    metric = MedicalCitationAccuracy()
+    text = "According to the guide (Source: manual.pdf, Page: 5)"
+    citations = metric._extract_citations(text)
+    assert len(citations) == 1
+    assert citations[0] == ("manual.pdf", "5")
+
+def test_citation_verification():
+    """Test citation verification."""
+    metric = MedicalCitationAccuracy()
+    citation = ("guide.pdf", "10")
+    contexts = ["Content from guide.pdf page 10..."]
+    assert metric._verify_citation(citation, contexts) == True
+
+def test_metric_scoring():
+    """Test complete metric scoring."""
+    metric = MedicalCitationAccuracy()
+    sample = SingleTurnSample(
+        user_input="Test",
+        response="Answer (Source: doc.pdf, Page: 1)",
+        retrieved_contexts=["doc.pdf page 1 content"],
+    )
+    score = metric._single_turn_score(sample)
+    assert 0 <= score <= 1
+```
+
+### Integration Tests
+
+Test metrics with full evaluation:
+
+```python
+from src.evaluation.ragas_evaluator import RAGASEvaluator
+
+# Create evaluator with custom metrics
+evaluator = RAGASEvaluator(rag_type="simple")
+
+# Run evaluation
+results = evaluator.run_evaluation()
+
+# Verify custom metrics are present
+df = results.to_pandas()
+assert "medical_citation_accuracy" in df.columns
+assert "medical_safety" in df.columns
+```
+
+## Best Practices
+
+### Metric Design
+
+- **Clear Definition**: Define exactly what the metric measures
+- **Bounded Scores**: Use 0-1 range for consistency with RAGAS
+- **Reproducibility**: Ensure deterministic behavior when possible
+- **Performance**: Optimize for evaluation speed
+
+### Evaluation Strategy
+
+- **Baseline First**: Establish baseline with standard metrics
+- **Incremental Addition**: Add custom metrics one at a time
+- **Validation**: Validate custom metrics against human judgment
+- **Documentation**: Document metric definitions and interpretation
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Interpreting Results" icon="chart-line" href="/evaluation/interpreting-results">
+    Understand evaluation outputs
+  </Card>
+  <Card title="Extending Research" icon="flask" href="/guides/extending-research">
+    Contribute new evaluation methods
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/introduction">
+    Complete API documentation
+  </Card>
+  <Card title="Adding RAG Architectures" icon="diagram-project" href="/guides/adding-rag-architectures">
+    Implement new retrieval strategies
+  </Card>
+</CardGroup>

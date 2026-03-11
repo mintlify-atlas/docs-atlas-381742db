@@ -1,0 +1,275 @@
+---
+title: HyDE RAG
+description: RAG pipeline using Hypothetical Document Embeddings for improved retrieval
+---
+
+## Overview
+
+The HyDE (Hypothetical Document Embeddings) RAG module implements a two-stage RAG pipeline. It first generates a hypothetical document that would perfectly answer the user's query, then uses that document for semantic search. This approach can improve retrieval accuracy by searching for detailed content rather than a short query.
+
+**Module:** `src.rag.hyde`
+
+**Source:** `src/rag/hyde.py`
+
+## Configuration
+
+### Default Models
+
+```python
+# Use a more creative model for HyDE document generation
+llm_hyde = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+
+# Use a powerful model for final answer generation
+llm_answer = ChatOpenAI(model_name="gpt-4o", temperature=0)
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+```
+
+### Vector Store
+
+```python
+vectorstore = Chroma(
+    persist_directory=str(chroma_db_dir),
+    embedding_function=embeddings,
+    collection_name="guia_embarazo_parto"
+)
+
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+```
+
+## Prompt Templates
+
+### HyDE Document Generation Prompt
+
+```python
+hyde_prompt_template = """
+You are a medical expert writing a detailed section for a medical guide on pregnancy and childbirth.
+
+Based on this question: {question}
+
+Write a detailed and comprehensive medical document that would perfectly answer this question.
+The document should include:
+- Accurate medical information on the topic
+- Relevant clinical details
+- Appropriate medical recommendations
+- Important considerations for maternal health
+- Practical information and advice
+
+Write the document as if it were part of an official medical guide on pregnancy and childbirth.
+Be specific, detailed, and use appropriate medical terminology.
+
+HYPOTHETICAL DOCUMENT:
+"""
+```
+
+### Answer Generation Prompt
+
+Uses the standard medical expert prompt (same as Simple RAG).
+
+## Functions
+
+### generate_hypothetical_document
+
+```python
+def generate_hypothetical_document(query: str) -> Dict[str, Any]
+```
+
+Generates a hypothetical document based on the user's query.
+
+<ParamField path="query" type="str" required>
+  The user's question
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Dictionary containing:
+  - `document` (str): The generated hypothetical document
+  - `input_tokens` (int): Input tokens used
+  - `output_tokens` (int): Output tokens generated
+  - `total_tokens` (int): Total tokens
+  - `usage_source` (str): Source of usage data
+  - `cost` (float): Cost in USD
+  - `cost_source` (str): Source of cost calculation
+</ResponseField>
+
+### format_docs
+
+```python
+def format_docs(docs: List[Any]) -> str
+```
+
+Formats the retrieved documents to be included in the final prompt.
+
+<ParamField path="docs" type="List[Any]" required>
+  A list of retrieved LangChain Document objects
+</ParamField>
+
+<ResponseField name="return" type="str">
+  A formatted string containing the content of the documents
+</ResponseField>
+
+### process_hyde_query
+
+```python
+def process_hyde_query(
+    query: str, 
+    custom_hyde_llm: ChatOpenAI = None, 
+    custom_answer_llm: ChatOpenAI = None
+) -> Dict[str, Any]
+```
+
+Processes a query using the full HyDE RAG pipeline.
+
+<ParamField path="query" type="str" required>
+  The user's question
+</ParamField>
+
+<ParamField path="custom_hyde_llm" type="ChatOpenAI" default="None">
+  Custom model for hypothetical document generation
+</ParamField>
+
+<ParamField path="custom_answer_llm" type="ChatOpenAI" default="None">
+  Custom model for answer generation
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Dictionary containing:
+  - `answer` (str): The final generated answer
+  - `contexts` (List[str]): Retrieved document contents
+  - `hypothetical_document` (str): The generated hypothetical document
+  - `hyde_metrics` (dict): Metrics for HyDE generation
+    - `input_tokens` (int)
+    - `output_tokens` (int)
+    - `cost` (float)
+    - `usage_source` (str)
+    - `cost_source` (str)
+  - `answer_metrics` (dict): Metrics for answer generation
+    - `input_tokens` (int)
+    - `output_tokens` (int)
+    - `cost` (float)
+    - `usage_source` (str)
+    - `cost_source` (str)
+  - `total_cost` (float): Combined cost
+  - `total_input_tokens` (int): Combined input tokens
+  - `total_output_tokens` (int): Combined output tokens
+  - `usage_sources` (List[str]): Sources of usage data
+  - `cost_sources` (List[str]): Sources of cost calculations
+</ResponseField>
+
+### query_for_evaluation
+
+```python
+def query_for_evaluation(
+    question: str, 
+    hyde_model: str = None, 
+    answer_model: str = None,
+    custom_hyde_llm: Optional[BaseChatModel] = None,
+    custom_answer_llm: Optional[BaseChatModel] = None
+) -> dict
+```
+
+A wrapper function for RAG evaluation frameworks like Ragas.
+
+<ParamField path="question" type="str" required>
+  The question to process
+</ParamField>
+
+<ParamField path="hyde_model" type="str" default="None">
+  The name of the LLM model to use for HyDE generation. Defaults to "gpt-3.5-turbo"
+</ParamField>
+
+<ParamField path="answer_model" type="str" default="None">
+  The name of the LLM model to use for answer generation. Defaults to "gpt-4o"
+</ParamField>
+
+<ParamField path="custom_hyde_llm" type="BaseChatModel" default="None">
+  Pre-configured LLM for HyDE. Takes precedence over hyde_model
+</ParamField>
+
+<ParamField path="custom_answer_llm" type="BaseChatModel" default="None">
+  Pre-configured LLM for answer. Takes precedence over answer_model
+</ParamField>
+
+<ResponseField name="return" type="dict">
+  Dictionary containing:
+  - `question` (str): Original question
+  - `answer` (str): Generated answer
+  - `contexts` (List[str]): Retrieved document contents
+  - `metadata` (dict): Comprehensive metadata including:
+    - `execution_time` (float): Total execution time in seconds
+    - `input_tokens` (int): Total input tokens (HyDE + Answer)
+    - `output_tokens` (int): Total output tokens (HyDE + Answer)
+    - `total_cost` (float): Total cost in USD
+    - `retrieval_method` (str): "hyde"
+    - `llm_hyde_model` (str): Model used for HyDE generation
+    - `llm_answer_model` (str): Model used for answer generation
+    - `hyde_provider` (str): Provider for HyDE model
+    - `answer_provider` (str): Provider for answer model
+    - `hyde_model_id` (str): Full HyDE model ID
+    - `answer_model_id` (str): Full answer model ID
+    - `hyde_cost` (float): Cost for HyDE generation
+    - `answer_cost` (float): Cost for answer generation
+    - `usage_source` (str): Combined usage sources
+    - `cost_source` (str): Cost calculation source
+</ResponseField>
+
+## Usage Example
+
+```python
+from src.rag.hyde import query_for_evaluation
+
+# Basic usage with default models
+result = query_for_evaluation(
+    question="¿Cuáles son las etapas del parto?"
+)
+
+print(result["answer"])
+print(f"HyDE model: {result['metadata']['llm_hyde_model']}")
+print(f"Answer model: {result['metadata']['llm_answer_model']}")
+print(f"Total cost: ${result['metadata']['total_cost']:.6f}")
+print(f"HyDE cost: ${result['metadata']['hyde_cost']:.6f}")
+print(f"Answer cost: ${result['metadata']['answer_cost']:.6f}")
+
+# Using custom models
+result = query_for_evaluation(
+    question="¿Qué es la episiotomía?",
+    hyde_model="gpt-4o-mini",
+    answer_model="gpt-4o"
+)
+
+# Using pre-configured LLMs
+from langchain_openai import ChatOpenAI
+
+hyde_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.8)
+answer_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+
+result = query_for_evaluation(
+    question="¿Cuándo es necesaria una cesárea?",
+    custom_hyde_llm=hyde_llm,
+    custom_answer_llm=answer_llm
+)
+```
+
+## Pipeline Flow
+
+1. **Generate HyDE**: Uses gpt-3.5-turbo (temperature=0.7) to generate a detailed hypothetical document that would answer the question
+2. **Retrieve**: Uses the hypothetical document (not the original query) to perform semantic search and retrieve the top 5 most relevant actual documents
+3. **Format**: Formats retrieved documents with metadata
+4. **Generate Answer**: Uses gpt-4o (temperature=0) to generate the final answer based on retrieved context
+5. **Track**: Captures separate metrics for both HyDE and answer generation
+
+## Key Features
+
+- **Two-stage retrieval**: Generates hypothetical content first, then searches
+- **Improved semantic matching**: Searches with detailed content vs. short query
+- **Dual model tracking**: Separate metrics for HyDE and answer generation
+- **Creative HyDE generation**: Uses higher temperature (0.7) for document generation
+- **Precise answer generation**: Uses temperature 0 for final answer
+- **Comprehensive cost tracking**: Tracks costs for both stages
+
+## When to Use HyDE
+
+HyDE works best when:
+- User queries are short or ambiguous
+- You need to bridge vocabulary gaps between query and documents
+- Documents use different terminology than typical user queries
+- You want to improve recall for conceptual questions

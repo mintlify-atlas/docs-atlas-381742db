@@ -1,0 +1,420 @@
+---
+title: "PageIndex RAG"
+description: "Cloud-native RAG using PageIndex's managed retrieval API for simplified document search"
+---
+
+## Overview
+
+PageIndex RAG is a cloud-based retrieval architecture that delegates document indexing and retrieval to PageIndex's managed API service. Instead of maintaining local embeddings and vector databases, you upload documents to PageIndex and query them via API.
+
+This approach offers:
+- **No local vector database**: PageIndex manages all indexing and storage
+- **Simplified architecture**: Focus on prompts and answer generation, not retrieval infrastructure
+- **Advanced retrieval features**: Access to PageIndex's "thinking" mode for deeper search
+- **Async retrieval**: Submit queries and poll for completion
+
+## How It Works
+
+### Pipeline Steps
+
+1. **Submit Query**: Send query to PageIndex API with document ID
+2. **Async Retrieval**: PageIndex processes the query asynchronously
+3. **Poll for Completion**: Wait for retrieval to complete (typically 2-5 seconds)
+4. **Extract Contexts**: Parse retrieved nodes and relevant content snippets
+5. **Answer Generation**: Use OpenAI LLM to generate answer from PageIndex context
+
+<Note>
+PageIndex uses an asynchronous retrieval model. You submit a query, receive a `retrieval_id`, and poll until the retrieval completes. The default timeout is 120 seconds with 2-second polling intervals.
+</Note>
+
+## Key Features
+
+- **Managed service**: No vector database maintenance or embedding management
+- **Async retrieval**: Non-blocking query submission with polling
+- **Structured results**: Retrieval returns hierarchical nodes with relevance-ranked snippets
+- **Thinking mode**: Optional deeper retrieval for complex queries
+- **No embedding costs**: PageIndex handles all embedding and search internally
+- **Cloud-first**: Built for cloud-native, distributed applications
+
+## Implementation Details
+
+### Environment Configuration
+
+```bash
+# Required environment variables
+PAGEINDEX_API_KEY=pk_xxx          # Your PageIndex API key
+PAGEINDEX_DOC_ID=pi-xxxx          # Document ID from PageIndex
+OPENAI_API_KEY=sk-xxx             # OpenAI key for answer generation
+```
+
+### Client Initialization
+
+```python
+from pageindex import PageIndexClient
+from langchain_openai import ChatOpenAI
+import os
+
+# Initialize PageIndex client
+pageindex_client = PageIndexClient(api_key=os.getenv("PAGEINDEX_API_KEY"))
+
+# Initialize answer generation LLM
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+### Core Processing Function
+
+```python
+def process_pageindex_query(
+    query: str,
+    custom_llm: Optional[ChatOpenAI] = None,
+    doc_id: Optional[str] = None,
+    thinking: bool = False,
+    timeout_seconds: int = 120,
+    poll_interval_seconds: float = 2.0,
+) -> Dict[str, Any]:
+    """
+    Processes a query with PageIndex retrieval and OpenAI answer synthesis.
+    
+    Args:
+        query: User question.
+        custom_llm: Optional custom answer model.
+        doc_id: Optional PageIndex document id. If None, uses PAGEINDEX_DOC_ID from .env.
+        thinking: Whether to enable PageIndex deeper retrieval mode.
+        timeout_seconds: Max wait time for retrieval completion.
+        poll_interval_seconds: Poll interval for retrieval status.
+    
+    Returns:
+        Dictionary with answer, contexts, retrieval payload and metrics.
+    """
+    effective_doc_id = doc_id or os.getenv("PAGEINDEX_DOC_ID")
+    
+    # 1. Submit query to PageIndex
+    submit_response = pageindex_client.submit_query(
+        doc_id=effective_doc_id,
+        query=query,
+        thinking=thinking,
+    )
+    retrieval_id = submit_response["retrieval_id"]
+    
+    # 2. Wait for retrieval completion
+    retrieval_result = _wait_for_retrieval_completion(
+        retrieval_id=retrieval_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    
+    # 3. Extract contexts from retrieval result
+    contexts = _extract_contexts_from_retrieval(retrieval_result)
+    formatted_context = _format_contexts(contexts)
+    
+    # 4. Generate final answer
+    current_llm = custom_llm if custom_llm else llm
+    response = current_llm.invoke(
+        qa_prompt.format_messages(context=formatted_context, question=query)
+    )
+    
+    # 5. Return comprehensive results
+    return {
+        "answer": response.content,
+        "contexts": contexts,
+        "retrieved_nodes": retrieval_result.get("retrieved_nodes", []),
+        "retrieval_result": retrieval_result,
+        "metrics": {...}
+    }
+```
+
+### Async Retrieval with Polling
+
+```python
+def _wait_for_retrieval_completion(
+    retrieval_id: str,
+    timeout_seconds: int = 120,
+    poll_interval_seconds: float = 2.0,
+) -> Dict[str, Any]:
+    """Polls PageIndex retrieval endpoint until completion or timeout."""
+    deadline = time.time() + timeout_seconds
+    
+    while time.time() < deadline:
+        retrieval = pageindex_client.get_retrieval(retrieval_id)
+        status = retrieval.get("status", "unknown")
+        
+        if status in ("completed", "done", "success"):
+            return retrieval
+        if status in ("failed", "error"):
+            raise RuntimeError(f"PageIndex retrieval failed: {retrieval}")
+        
+        time.sleep(poll_interval_seconds)
+    
+    raise TimeoutError(
+        f"Timed out waiting for retrieval completion. retrieval_id={retrieval_id}"
+    )
+```
+
+### Context Extraction from PageIndex Results
+
+```python
+def _extract_contexts_from_retrieval(retrieval_result: Dict[str, Any]) -> List[str]:
+    """
+    Converts PageIndex retrieval payload into List[str] context format.
+    """
+    contexts: List[str] = []
+    
+    for node in retrieval_result.get("retrieved_nodes", []):
+        title = node.get("title", "Untitled")
+        relevant_contents = node.get("relevant_contents", [])
+        
+        snippets: List[str] = []
+        for group in relevant_contents:
+            if not isinstance(group, list):
+                continue
+            for item in group:
+                content = item.get("relevant_content") if isinstance(item, dict) else None
+                if content:
+                    snippets.append(str(content).strip())
+        
+        # Keep top 2 snippets per node for concise context
+        top_snippets = snippets[:2]
+        contexts.append(
+            f"Title: {title}\n" + "\n\n".join(top_snippets)
+        )
+    
+    return contexts
+```
+
+## Usage with query_for_evaluation()
+
+```python
+from src.rag.pageindex import query_for_evaluation
+
+# Basic usage with default model (gpt-4o)
+result = query_for_evaluation(
+    question="¿Cuáles son los síntomas del parto prematuro?"
+)
+
+# With custom model
+result = query_for_evaluation(
+    question="¿Qué es la diabetes gestacional?",
+    llm_model="gpt-4o-mini"
+)
+
+# With thinking mode enabled (deeper search)
+result = query_for_evaluation(
+    question="¿Qué cuidados necesito en el embarazo?",
+    thinking=True
+)
+
+# With custom document ID
+result = query_for_evaluation(
+    question="¿Qué es la preeclampsia?",
+    doc_id="pi-custom-doc-id"
+)
+
+# With custom LLM instance
+from langchain_openai import ChatOpenAI
+custom_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+result = query_for_evaluation(
+    question="¿Cuándo debo ir al hospital?",
+    custom_llm=custom_llm
+)
+```
+
+### Return Structure
+
+```python
+{
+    "question": str,
+    "answer": str,
+    "contexts": List[str],           # Extracted from PageIndex nodes
+    "source_documents": List,        # Raw PageIndex retrieved_nodes
+    "metadata": {
+        "num_contexts": 4,
+        "retrieval_method": "pageindex",
+        "llm_model": "gpt-4o",
+        "provider": "openai",
+        "execution_time": 4.23,
+        "input_tokens": 1834,
+        "output_tokens": 198,
+        "total_cost": 0.002456,
+        "doc_id": "pi-xxxx",
+        "retrieval_id": "retr_xxxx",
+        "pageindex_thinking": false
+    }
+}
+```
+
+## When to Use This Approach
+
+### Best For
+
+- **Rapid prototyping**: Skip vector database setup and focus on prompts
+- **Cloud-native applications**: Built for distributed, serverless architectures
+- **Dynamic documents**: PageIndex handles re-indexing when documents change
+- **Multiple document sets**: Easily switch between different doc_ids
+- **Managed infrastructure**: Prefer API-first over self-hosted databases
+- **Advanced retrieval**: Access to PageIndex's proprietary retrieval algorithms
+
+### Advantages Over Local Vector Stores
+
+- **No infrastructure**: No ChromaDB, Pinecone, or vector database to maintain
+- **No embedding costs**: PageIndex handles embeddings internally
+- **Automatic updates**: Re-index documents without managing embeddings
+- **Scalability**: PageIndex scales retrieval infrastructure automatically
+- **Advanced features**: Access to "thinking" mode and future PageIndex capabilities
+
+### Limitations
+
+- **External dependency**: Requires internet connection and PageIndex service availability
+- **API latency**: Network round-trips add ~1-2 seconds vs. local retrieval
+- **Cost model**: Pay per query (vs. one-time embedding cost for local)
+- **Less control**: Cannot customize retrieval algorithms or embedding models
+- **Data privacy**: Documents stored on PageIndex's servers (check compliance requirements)
+
+<Warning>
+PageIndex stores your documents on their servers for indexing and retrieval. Ensure this meets your data privacy and compliance requirements before using for sensitive medical or personal data.
+</Warning>
+
+## Performance Characteristics
+
+### Speed
+
+- **Query submission**: ~0.1-0.3 seconds
+- **PageIndex retrieval**: ~2-5 seconds (async processing)
+- **Polling overhead**: ~0-2 seconds (depends on timing)
+- **Answer generation**: ~1-2 seconds (OpenAI LLM)
+- **Total**: ~4-8 seconds (higher latency than local methods)
+
+### Cost
+
+- **PageIndex API**: Varies by plan (check PageIndex pricing)
+- **No embedding costs**: Included in PageIndex API
+- **OpenAI LLM**: ~$0.002-0.005 per query (same as other methods)
+- **Total**: PageIndex cost + LLM cost
+
+### Quality
+
+- **Retrieval quality**: Depends on PageIndex's algorithms (proprietary)
+- **Comparable to semantic search**: Generally good for well-structured documents
+- **Thinking mode**: May improve complex queries (experimental)
+- **Context structure**: Hierarchical nodes with relevance-ranked snippets
+
+## PageIndex Thinking Mode
+
+PageIndex offers an optional "thinking" mode for deeper retrieval:
+
+```python
+# Standard retrieval (fast)
+result = process_pageindex_query(
+    query="¿Qué es la preeclampsia?",
+    thinking=False  # Default
+)
+
+# Thinking mode (deeper, slower)
+result = process_pageindex_query(
+    query="¿Qué es la preeclampsia?",
+    thinking=True   # Enable deeper search
+)
+```
+
+<Note>
+Thinking mode may take longer (5-10 seconds) but can provide more comprehensive retrieval for complex, multi-faceted queries. Use it when retrieval quality is more important than speed.
+</Note>
+
+## Error Handling
+
+The implementation includes robust error handling:
+
+```python
+try:
+    result = query_for_evaluation(question="Sample question")
+except ValueError as e:
+    # Missing API key or doc_id
+    print(f"Configuration error: {e}")
+except TimeoutError as e:
+    # Retrieval took too long
+    print(f"Retrieval timeout: {e}")
+except PageIndexAPIError as e:
+    # PageIndex API error
+    print(f"PageIndex error: {e}")
+except Exception as e:
+    # Other errors
+    print(f"Unexpected error: {e}")
+```
+
+## Comparison with Other Architectures
+
+| Feature | Simple Semantic | Hybrid RRF | PageIndex (This) |
+|---------|----------------|------------|------------------|
+| **Infrastructure** | Local ChromaDB | Local ChromaDB + BM25 | PageIndex API |
+| **Embedding costs** | Pay per embed | Pay per embed | Included in API |
+| **Setup complexity** | Medium | High | Low |
+| **Retrieval latency** | ~1s | ~2s | ~4s |
+| **Scalability** | Manual | Manual | Automatic |
+| **Data location** | Local | Local | PageIndex cloud |
+| **Best for** | Self-hosted | Max quality | Cloud-native |
+
+## Multi-Document Support
+
+PageIndex makes it easy to query different document sets:
+
+```python
+# Query medical guide
+result1 = query_for_evaluation(
+    question="¿Qué es la diabetes gestacional?",
+    doc_id="pi-medical-guide"
+)
+
+# Query patient FAQ
+result2 = query_for_evaluation(
+    question="¿Cuándo debo llamar al doctor?",
+    doc_id="pi-patient-faq"
+)
+
+# Query clinical protocols
+result3 = query_for_evaluation(
+    question="¿Cuál es el protocolo para parto prematuro?",
+    doc_id="pi-clinical-protocols"
+)
+```
+
+## Document Upload and Management
+
+While retrieval is handled via this code, document upload is done separately:
+
+```bash
+# Upload document to PageIndex (via their CLI or API)
+pageindex upload pregnancy-guide.pdf
+# Returns: Document ID pi-xxxx
+
+# Set in .env
+PAGEINDEX_DOC_ID=pi-xxxx
+```
+
+See PageIndex documentation for document upload details.
+
+## Metrics and Observability
+
+The implementation tracks detailed metrics:
+
+```python
+result['metadata'] = {
+    'execution_time': 4.23,
+    'input_tokens': 1834,          # LLM tokens only (no embedding tokens)
+    'output_tokens': 198,
+    'total_cost': 0.002456,        # LLM cost only (PageIndex billed separately)
+    'doc_id': 'pi-xxxx',
+    'retrieval_id': 'retr_xxxx',   # For debugging/tracing
+    'pageindex_thinking': False,
+    'usage_source': 'provider'
+}
+```
+
+<Note>
+Cost tracking includes only LLM costs. PageIndex API costs are billed separately through your PageIndex account.
+</Note>
+
+## Source Files
+
+- Implementation: `~/workspace/source/src/rag/pageindex.py:142-206`
+- Async polling: `~/workspace/source/src/rag/pageindex.py:75-96`
+- Context extraction: `~/workspace/source/src/rag/pageindex.py:99-129`
+- Evaluation interface: `~/workspace/source/src/rag/pageindex.py:209-288`

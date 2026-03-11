@@ -1,0 +1,215 @@
+---
+title: 'RAGAS Metrics'
+description: 'Understanding RAGAS evaluation metrics for RAG systems'
+---
+
+# RAGAS Metrics
+
+This project uses [RAGAS (Retrieval-Augmented Generation Assessment)](https://github.com/explodinggradients/ragas) as the evaluation framework. RAGAS provides automated, LLM-based metrics that assess both retrieval quality and generation quality without requiring manual annotations.
+
+## Core Metrics
+
+The evaluation system tracks four fundamental RAGAS metrics:
+
+### Faithfulness
+
+**What it measures:** How much of the generated answer is grounded in the retrieved context.
+
+**Purpose:** Reduces hallucination by ensuring the LLM only uses information from the retrieved documents.
+
+**Score range:** 0.0 to 1.0 (higher is better)
+
+**Interpretation:**
+- **0.8 - 1.0:** Excellent - Answer is highly faithful to the context
+- **0.6 - 0.8:** Good - Most claims are supported by the context
+- **0.4 - 0.6:** Fair - Some hallucination present
+- **< 0.4:** Poor - Significant hallucination or unsupported claims
+
+**Example from source code:**
+```python
+from ragas.metrics import faithfulness
+
+metrics = [
+    faithfulness,  # Answer faithfulness to context
+    # ...
+]
+```
+
+### Answer Relevancy
+
+**What it measures:** Whether the generated answer directly addresses the input question.
+
+**Purpose:** Ensures the response is on-topic and answers what the user actually asked.
+
+**Score range:** 0.0 to 1.0 (higher is better)
+
+**Interpretation:**
+- **0.8 - 1.0:** Excellent - Answer directly addresses the question
+- **0.6 - 0.8:** Good - Answer is mostly relevant
+- **0.4 - 0.6:** Fair - Answer is partially relevant
+- **< 0.4:** Poor - Answer doesn't address the question
+
+**Example from source code:**
+```python
+from ragas.metrics import answer_relevancy
+
+metrics = [
+    answer_relevancy,  # Answer relevance to question
+    # ...
+]
+```
+
+### Context Precision
+
+**What it measures:** The proportion of retrieved context that is relevant to the question.
+
+**Purpose:** Evaluates retrieval quality by measuring how much of the retrieved information is actually useful.
+
+**Score range:** 0.0 to 1.0 (higher is better)
+
+**Interpretation:**
+- **0.8 - 1.0:** Excellent - Very high precision, minimal irrelevant context
+- **0.6 - 0.8:** Good - Most retrieved chunks are relevant
+- **0.4 - 0.6:** Fair - Significant irrelevant context retrieved
+- **< 0.4:** Poor - Retrieval is pulling mostly irrelevant information
+
+**Example from source code:**
+```python
+from ragas.metrics import context_precision
+
+metrics = [
+    context_precision,  # Precision of retrieved contexts
+    # ...
+]
+```
+
+### Context Recall
+
+**What it measures:** The completeness of retrieved relevant information from the knowledge base.
+
+**Purpose:** Ensures the retrieval system finds all the necessary information to answer the question.
+
+**Score range:** 0.0 to 1.0 (higher is better)
+
+**Interpretation:**
+- **0.8 - 1.0:** Excellent - Retrieved all necessary information
+- **0.6 - 0.8:** Good - Retrieved most necessary information
+- **0.4 - 0.6:** Fair - Missing some important context
+- **< 0.4:** Poor - Missing critical information
+
+**Example from source code:**
+```python
+from ragas.metrics import context_recall
+
+metrics = [
+    context_recall  # Recall of necessary information
+]
+```
+
+## Metric Calculation
+
+RAGAS metrics are calculated using the following data points from your RAG system:
+
+```python
+# From ragas_evaluator.py:181-245
+dataset = Dataset.from_dict({
+    "question": questions,        # User's question
+    "answer": answers,            # Generated answer from RAG
+    "contexts": contexts,         # Retrieved document chunks
+    "ground_truth": ground_truths # Expected correct answer
+})
+```
+
+### Evaluation Process
+
+```python
+# From ragas_evaluator.py:250-276
+from ragas import evaluate
+from ragas.run_config import RunConfig
+
+run_config = RunConfig(timeout=None, max_workers=8)
+
+results = evaluate(
+    dataset=dataset,
+    metrics=self.metrics,
+    run_config=run_config,
+)
+```
+
+## Overall Performance Assessment
+
+The system calculates an overall average score across all four metrics:
+
+```python
+# From ragas_evaluator.py:420-432
+if scores:
+    avg_score = sum(scores.values()) / len(scores)
+    print(f"\nAverage Score: {avg_score:.3f}")
+    
+    if avg_score >= 0.8:
+        print("Performance: Excellent")
+    elif avg_score >= 0.6:
+        print("Performance: Good")
+    elif avg_score >= 0.4:
+        print("Performance: Needs improvement")
+    else:
+        print("Performance: Significant improvements needed")
+```
+
+**Overall Score Interpretation:**
+- **0.8 - 1.0:** Excellent - Production-ready RAG system
+- **0.6 - 0.8:** Good - Minor improvements may help
+- **0.4 - 0.6:** Needs improvement - Review retrieval and generation
+- **< 0.4:** Significant improvements needed - Major issues present
+
+## Example Metric Results
+
+From actual evaluation results (`results/ragas_evaluation_simple_20260311_093843.json`):
+
+```json
+{
+  "summary": {
+    "simple": {
+      "rag_name": "Simple Semantic RAG",
+      "metrics": {
+        "faithfulness": 0.850,
+        "answer_relevancy": 0.265,
+        "context_precision": 0.779,
+        "context_recall": 0.600
+      },
+      "performance": {
+        "overall_average_score": 0.623
+      }
+    }
+  }
+}
+```
+
+**Analysis:**
+- **Faithfulness (0.850):** Excellent - answers are well-grounded in context
+- **Answer Relevancy (0.265):** Poor - answers may not directly address questions
+- **Context Precision (0.779):** Good - retrieval is mostly accurate
+- **Context Recall (0.600):** Fair - some relevant information may be missing
+- **Overall (0.623):** Good - system performs adequately but has room for improvement
+
+## Best Practices
+
+<Tip>
+When analyzing RAGAS metrics:
+
+1. **Low faithfulness?** → Check if your prompts encourage the LLM to cite sources
+2. **Low answer relevancy?** → Review your prompt templates for answer generation
+3. **Low context precision?** → Improve your retrieval strategy or increase similarity threshold
+4. **Low context recall?** → Retrieve more chunks (increase k) or improve embedding quality
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Running Evaluations" icon="play" href="/evaluation/running-evaluations">
+    Learn how to run RAGAS evaluations on your RAG systems
+  </Card>
+  <Card title="Interpreting Results" icon="chart-line" href="/evaluation/interpreting-results">
+    Understand how to analyze evaluation results
+  </Card>
+</CardGroup>

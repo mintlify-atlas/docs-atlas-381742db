@@ -1,0 +1,211 @@
+---
+title: 'Core Concepts Overview'
+description: 'Understanding RAG systems for medical question-answering in obstetrics'
+icon: 'lightbulb'
+---
+
+## What is Retrieval-Augmented Generation?
+
+Retrieval-Augmented Generation (RAG) is a powerful technique that enhances Large Language Models (LLMs) by combining them with external knowledge retrieval. Instead of relying solely on a model's pre-trained knowledge, RAG systems:
+
+1. **Retrieve** relevant information from a knowledge base
+2. **Augment** the model's context with this information
+3. **Generate** accurate, grounded responses
+
+<Note>
+**Why RAG for Medical Q&A?**
+
+Medical information requires high accuracy and up-to-date knowledge. RAG systems ground LLM responses in verified medical documentation, reducing hallucinations and ensuring answers are based on authoritative sources.
+</Note>
+
+## The Obstetrics RAG Benchmark
+
+This project systematically evaluates different RAG architectures for answering questions about pregnancy, prenatal care, and childbirth. The benchmark uses real medical guidance documents to create a comprehensive test of RAG effectiveness in the healthcare domain.
+
+### Research Objectives
+
+<CardGroup cols={2}>
+  <Card title="Architecture Comparison" icon="diagram-project">
+    Evaluate 6 distinct RAG retrieval strategies from simple semantic search to advanced query reformulation
+  </Card>
+  
+  <Card title="Model Performance" icon="microchip">
+    Assess how different LLMs (GPT-3.5, GPT-4, GPT-4o) perform with each RAG architecture
+  </Card>
+  
+  <Card title="Retrieval Quality" icon="bullseye">
+    Measure precision and recall of different retrieval strategies for medical content
+  </Card>
+  
+  <Card title="Best Practices" icon="star">
+    Identify optimal configurations for medical question-answering systems
+  </Card>
+</CardGroup>
+
+## System Architecture
+
+The Obstetrics RAG Benchmark implements a complete evaluation pipeline:
+
+```mermaid
+flowchart LR
+    A[User Question] --> B[RAG System]
+    B --> C[Retrieval Strategy]
+    C --> D[Vector Store]
+    D --> E[Top-K Documents]
+    E --> F[LLM]
+    F --> G[Generated Answer]
+    G --> H[RAGAS Evaluation]
+    H --> I[Metrics Report]
+```
+
+### Key Components
+
+<AccordionGroup>
+  <Accordion title="Data Pipeline">
+    Raw medical documents are processed, chunked, and embedded into a ChromaDB vector store. This creates a searchable knowledge base optimized for semantic retrieval.
+    
+    **Processing Steps:**
+    - Document extraction from PDFs
+    - Text chunking with overlap
+    - Embedding generation (OpenAI text-embedding-3-small)
+    - Vector store indexing
+  </Accordion>
+  
+  <Accordion title="RAG Architectures">
+    Six different retrieval strategies are implemented, each representing a distinct approach to finding relevant medical information:
+    
+    - Simple Semantic Search (baseline)
+    - Hybrid Search (BM25 + Semantic)
+    - Hybrid with RRF (Reciprocal Rank Fusion)
+    - HyDE (Hypothetical Document Embeddings)
+    - Query Rewriter (Multi-Query)
+    - PageIndex (External API)
+  </Accordion>
+  
+  <Accordion title="Language Models">
+    The system evaluates multiple OpenAI models to understand how model capability affects RAG performance:
+    
+    - **GPT-3.5 Turbo**: Fast, cost-effective baseline
+    - **GPT-4**: High-capability general model
+    - **GPT-4o**: Optimized latest generation
+    - **GPT-4o Mini**: Efficient compact model
+  </Accordion>
+  
+  <Accordion title="Evaluation Framework">
+    RAGAS (Retrieval-Augmented Generation Assessment) provides automated, LLM-based evaluation metrics that assess both retrieval quality and answer quality without manual annotation.
+  </Accordion>
+</AccordionGroup>
+
+## How RAG Components Work Together
+
+A typical RAG query flows through multiple stages:
+
+### 1. Query Processing
+
+The user's question is analyzed and potentially transformed depending on the RAG architecture:
+
+```python
+# Example: Simple semantic search
+query = "¿Cuál es la cantidad ideal de controles prenatales?"
+
+# Example: Query rewriting
+queries = [
+    "¿Cuál es la cantidad ideal de controles prenatales?",
+    "¿Cuántas consultas prenatales se recomiendan?",
+    "Número óptimo de visitas durante el embarazo"
+]
+```
+
+### 2. Document Retrieval
+
+Relevant documents are retrieved from the vector store:
+
+```python
+# Semantic similarity search
+retrieved_docs = vectorstore.similarity_search(query, k=5)
+
+# Each document contains:
+# - page_content: The actual text
+# - metadata: Source, page number, chunk information
+```
+
+### 3. Context Construction
+
+Retrieved documents are formatted as context for the LLM:
+
+```
+--- Document 1 ---
+Source: Guía Práctica Clínica, Page: 15
+Content: Se recomienda un programa de diez citas...
+
+--- Document 2 ---
+Source: Guía Práctica Clínica, Page: 16
+Content: Para una mujer multípara...
+```
+
+### 4. Answer Generation
+
+The LLM generates a response grounded in the retrieved context:
+
+```python
+response = llm.invoke(
+    f"Context: {formatted_context}\n\nQuestion: {query}\n\nAnswer:"
+)
+```
+
+### 5. Evaluation
+
+The answer is evaluated against ground truth using RAGAS metrics:
+
+- **Faithfulness**: Is the answer grounded in the context?
+- **Answer Relevancy**: Does it address the question?
+- **Context Precision**: Were relevant documents retrieved?
+- **Context Recall**: Was all necessary information retrieved?
+
+## Research Dataset
+
+The benchmark uses a curated dataset of 10 questions about pregnancy and prenatal care, each with ground truth answers derived from clinical practice guidelines:
+
+<Card title="Example Question" icon="message-question">
+  **Question**: ¿Cuál es la cantidad ideal de controles prenatales?
+  
+  **Ground Truth**: Se recomienda un programa de diez citas. Para una mujer multípara con un embarazo de curso normal se recomienda un programa de siete citas.
+  
+  **Evaluation**: The system retrieves relevant guidelines and generates an answer, which is then scored on faithfulness, relevancy, precision, and recall.
+</Card>
+
+## Key Research Questions
+
+This benchmark addresses critical questions for medical RAG systems:
+
+1. **Which retrieval strategy produces the most accurate medical answers?**
+   - Does semantic search alone suffice, or do hybrid approaches improve results?
+   
+2. **How much does model choice matter?**
+   - Is GPT-4 significantly better than GPT-3.5 for medical RAG?
+   
+3. **What are the cost-performance tradeoffs?**
+   - Can cheaper models achieve similar quality with better retrieval?
+   
+4. **Do advanced techniques justify their complexity?**
+   - Are HyDE and query rewriting worth the additional LLM calls?
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RAG Architectures" icon="sitemap" href="/concepts/rag-architectures">
+    Explore the 6 different retrieval strategies in detail
+  </Card>
+  
+  <Card title="Evaluation Framework" icon="chart-line" href="/concepts/evaluation-framework">
+    Learn how RAGAS measures RAG system quality
+  </Card>
+  
+  <Card title="Data Pipeline" icon="database" href="/concepts/data-pipeline">
+    Understand document processing and vector store creation
+  </Card>
+  
+  <Card title="Getting Started" icon="rocket" href="/getting-started/quickstart">
+    Run your first evaluation
+  </Card>
+</CardGroup>

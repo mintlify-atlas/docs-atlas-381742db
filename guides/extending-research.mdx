@@ -1,0 +1,276 @@
+---
+title: 'Extending the Research'
+description: 'Guide to extending the Obstetrics RAG Benchmark with new capabilities'
+icon: 'flask'
+---
+
+This guide covers how to extend the Obstetrics RAG Benchmark project with new data sources, retrieval parameters, and research contributions.
+
+## Extension Points
+
+The benchmark provides several extension points for researchers:
+
+- **RAG Architectures**: Add novel retrieval strategies (`~/workspace/source/src/rag/`)
+- **Model Integration**: Test new LLMs and SLMs (`~/workspace/source/src/common/model_provider.py`)
+- **Evaluation Metrics**: Extend RAGAS evaluation (`~/workspace/source/src/evaluation/ragas_evaluator.py`)
+- **Data Sources**: Integrate new medical corpora (`~/workspace/source/data/`)
+
+## Adding New Data Sources
+
+The benchmark uses a medical corpus on pregnancy and childbirth. To add new data sources:
+
+<Steps>
+  <Step title="Prepare Document Chunks">
+    Create a JSON file in `data/chunks/` with the following structure:
+    
+    ```json
+    [
+      {
+        "content": "Your medical text content here...",
+        "source": "document_name.pdf",
+        "page_number": 1,
+        "chunk_id": "chunk_001"
+      }
+    ]
+    ```
+    
+    Each chunk should contain:
+    - `content`: The text content of the chunk
+    - `source`: Original document filename
+    - `page_number`: Page number in source document
+    - `chunk_id`: Unique identifier for the chunk
+  </Step>
+  
+  <Step title="Generate Embeddings">
+    Run the embedding generation script to create vector representations:
+    
+    ```bash
+    python scripts/create_embeddings.py
+    ```
+    
+    This will:
+    - Load chunks from `data/chunks/chunks_final.json`
+    - Generate embeddings using OpenAI's `text-embedding-3-small`
+    - Store them in ChromaDB at `data/embeddings/chroma_db/`
+  </Step>
+  
+  <Step title="Update Collection Name">
+    If using a different medical domain, update the collection name in RAG implementations:
+    
+    ```python
+    # In src/rag/simple.py, hybrid.py, etc.
+    collection_name = "your_collection_name"
+    
+    vectorstore = Chroma(
+        persist_directory=str(chroma_db_dir),
+        embedding_function=embeddings,
+        collection_name=collection_name,
+    )
+    ```
+  </Step>
+  
+  <Step title="Update Ground Truth Questions">
+    Modify the evaluation dataset in `src/evaluation/ragas_evaluator.py:49-90`:
+    
+    ```python
+    DATA_GT = [
+        {
+            "question": "Your domain-specific question?",
+            "ground_truth": "Expected answer based on your corpus."
+        },
+        # Add more question-answer pairs...
+    ]
+    ```
+  </Step>
+</Steps>
+
+## Modifying Retrieval Parameters
+
+Each RAG implementation allows retrieval parameter tuning:
+
+### Adjusting Number of Retrieved Documents
+
+```python
+# In src/rag/simple.py:54
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})  # Change k value
+
+# In src/rag/hybrid.py:66,74
+bm25_retriever.k = 5  # Adjust BM25 retrieval count
+semantic_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+```
+
+### Tuning Hybrid Retrieval Weights
+
+```python
+# In src/rag/hybrid.py:77-82
+ensemble_weight_bm25 = 0.5      # Lexical weight
+ensemble_weight_semantic = 0.5   # Semantic weight
+
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[ensemble_weight_bm25, ensemble_weight_semantic]
+)
+```
+
+**Best Practice**: Document parameter changes in evaluation metadata to track their impact on performance.
+
+### Modifying Temperature for Generation
+
+```python
+# For creative generation (HyDE hypothetical documents)
+llm_hyde = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+
+# For deterministic answers
+llm_answer = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+## Experimentation Best Practices
+
+### 1. Version Control Your Experiments
+
+Create separate branches for experimental changes:
+
+```bash
+git checkout -b experiment/new-chunking-strategy
+```
+
+### 2. Track Configuration Changes
+
+Document experiments in your evaluation metadata:
+
+```python
+metadata = {
+    "experiment_name": "increased_context_window",
+    "retrieval_k": 10,
+    "changes": "Doubled retrieved documents from 5 to 10",
+    "hypothesis": "More context improves faithfulness scores"
+}
+```
+
+### 3. Run Comparative Evaluations
+
+Always compare against baseline:
+
+```bash
+# Baseline
+python scripts/run_evaluation.py simple
+
+# Your modification
+python scripts/run_evaluation.py simple
+```
+
+### 4. Analyze Results Systematically
+
+Compare metrics across configurations:
+
+- **Faithfulness**: Did more context reduce hallucinations?
+- **Answer Relevancy**: Are answers still focused on the question?
+- **Context Precision**: Is the retrieved context more relevant?
+- **Context Recall**: Are we capturing all necessary information?
+
+## Contributing to the Project
+
+We welcome research contributions that advance RAG techniques for medical Q&A:
+
+### Contribution Areas
+
+<CardGroup cols={2}>
+  <Card title="Novel RAG Architectures" icon="sitemap">
+    Implement and evaluate new retrieval strategies
+  </Card>
+  <Card title="Model Integration" icon="microchip">
+    Add domain-specialized medical language models
+  </Card>
+  <Card title="Evaluation Extensions" icon="chart-line">
+    Propose additional metrics or analysis methods
+  </Card>
+  <Card title="Results & Analysis" icon="microscope">
+    Contribute comparative insights and visualizations
+  </Card>
+</CardGroup>
+
+### Contribution Workflow
+
+<Steps>
+  <Step title="Fork the Repository">
+    ```bash
+    git clone https://github.com/NicolasHoyosDevs/RAG-Benchmark.git
+    cd RAG-Benchmark
+    ```
+  </Step>
+  
+  <Step title="Create Feature Branch">
+    Use descriptive names for your branch:
+    
+    ```bash
+    git checkout -b feature/semantic-reranking
+    ```
+  </Step>
+  
+  <Step title="Implement Your Changes">
+    Follow the existing code structure and patterns. Add comprehensive docstrings.
+  </Step>
+  
+  <Step title="Run Evaluations">
+    Evaluate your changes across multiple models:
+    
+    ```bash
+    python scripts/run_evaluation.py multi-model your-rag-type
+    ```
+  </Step>
+  
+  <Step title="Document Your Methodology">
+    Include:
+    - Hypothesis and motivation
+    - Implementation details
+    - Experimental setup
+    - Results summary and analysis
+  </Step>
+  
+  <Step title="Submit Pull Request">
+    Create a PR with:
+    - Clear description of changes
+    - Evaluation results comparison
+    - Analysis of improvements/trade-offs
+  </Step>
+</Steps>
+
+## Research Guidelines
+
+### Reproducibility
+
+- **Fix Random Seeds**: Set random seeds for reproducible results
+- **Document Dependencies**: Update `requirements.txt` with new packages
+- **Save Configurations**: Store all hyperparameters in configuration files
+
+### Statistical Rigor
+
+- Run multiple trials to account for variance
+- Report mean and standard deviation for metrics
+- Use appropriate statistical tests for comparisons
+
+### Ethical Considerations
+
+When extending to new medical domains:
+
+- Ensure data sources are properly licensed
+- Validate medical accuracy with domain experts
+- Include appropriate disclaimers about clinical use
+- Respect patient privacy in any real-world data
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Adding RAG Architectures" icon="diagram-project" href="/guides/adding-rag-architectures">
+    Learn how to implement new RAG strategies
+  </Card>
+  <Card title="Integrating Models" icon="brain" href="/guides/integrating-models">
+    Add new LLMs to the model registry
+  </Card>
+  <Card title="Customizing Metrics" icon="sliders" href="/guides/customizing-metrics">
+    Extend evaluation with custom metrics
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/introduction">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

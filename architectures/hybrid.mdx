@@ -1,0 +1,260 @@
+---
+title: "Hybrid RAG (BM25 + Semantic)"
+description: "Combines lexical BM25 search with semantic search using LangChain's EnsembleRetriever for improved retrieval"
+---
+
+## Overview
+
+Hybrid RAG combines two complementary retrieval strategies:
+- **Lexical search (BM25)**: Matches exact keywords and terms
+- **Semantic search (ChromaDB)**: Matches meaning and context
+
+This architecture uses LangChain's `EnsembleRetriever` to merge results from both retrievers with configurable weights, providing more robust retrieval than either method alone.
+
+## How It Works
+
+The Hybrid RAG pipeline follows these steps:
+
+1. **Parallel Retrieval**: Query is sent to both BM25 and semantic retrievers simultaneously
+2. **Weighted Fusion**: Results are combined using configurable weights (default 0.5/0.5)
+3. **Result Merging**: Ensemble retriever produces a unified ranked list
+4. **Context Formatting**: Merged documents are formatted with metadata
+5. **Answer Generation**: LLM generates the final answer from combined context
+
+<Note>
+The ensemble weights determine how much influence each retriever has on the final ranking. Equal weights (0.5/0.5) give balanced importance to both keyword matching and semantic similarity.
+</Note>
+
+## Key Features
+
+- **Best of both worlds**: Combines keyword precision with semantic understanding
+- **Configurable weights**: Adjust the balance between lexical and semantic retrieval
+- **Deduplication**: Automatically handles documents retrieved by both methods
+- **Complementary coverage**: Catches documents that only one method would find
+
+## Implementation Details
+
+### Retriever Configuration
+
+```python
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
+from langchain_chroma import Chroma
+
+# 1. Load documents for BM25
+documents = load_documents()  # From chunks_final.json
+
+# 2. Configure Lexical Retriever (BM25)
+bm25_retriever = BM25Retriever.from_documents(documents)
+bm25_retriever.k = 5
+
+# 3. Configure Semantic Retriever (Chroma)
+vectorstore = Chroma(
+    persist_directory=str(chroma_db_dir),
+    embedding_function=embeddings,
+    collection_name="guia_embarazo_parto",
+)
+semantic_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+# 4. Create Ensemble Retriever
+ensemble_weight_bm25 = 0.5
+ensemble_weight_semantic = 0.5
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[ensemble_weight_bm25, ensemble_weight_semantic]
+)
+```
+
+### Core Processing Function
+
+The `process_hybrid_query()` function handles the complete hybrid pipeline:
+
+```python
+def process_hybrid_query(query: str, custom_llm: ChatOpenAI = None) -> Dict[str, Any]:
+    """
+    Processes a query using the hybrid RAG pipeline.
+    
+    Args:
+        query (str): The user's question.
+        custom_llm (ChatOpenAI, optional): A custom language model to use.
+    
+    Returns:
+        Dict[str, Any]: A dictionary with the final answer, contexts, and detailed metrics.
+    """
+    # 1. Retrieve similar documents using the ensemble retriever
+    retrieved_docs = ensemble_retriever.invoke(query)
+    
+    # 2. Format context
+    formatted_context = format_docs(retrieved_docs)
+    
+    # 3. Generate final answer
+    current_llm = custom_llm if custom_llm else llm
+    response = current_llm.invoke(qa_prompt.format_messages(
+        context=formatted_context,
+        question=query
+    ))
+    
+    # 4. Return response and all metrics
+    return {
+        'answer': response.content,
+        'contexts': [doc.page_content for doc in retrieved_docs],
+        'retrieved_documents': retrieved_docs,
+        'metrics': {...}
+    }
+```
+
+## Usage with query_for_evaluation()
+
+```python
+from src.rag.hybrid import query_for_evaluation
+
+# Basic usage with default model (gpt-4o)
+result = query_for_evaluation(
+    question="¿Qué es la diabetes gestacional?"
+)
+
+# With custom model name
+result = query_for_evaluation(
+    question="¿Cuáles son los signos de parto?",
+    llm_model="gpt-4o-mini"
+)
+
+# With custom LLM instance
+from langchain_openai import ChatOpenAI
+custom_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+result = query_for_evaluation(
+    question="¿Qué pruebas se hacen en el embarazo?",
+    custom_llm=custom_llm
+)
+```
+
+### Return Structure
+
+```python
+{
+    "question": str,
+    "answer": str,
+    "contexts": List[str],
+    "source_documents": List,
+    "metadata": {
+        "num_contexts": 5,
+        "retrieval_method": "hybrid_bm25_semantic",
+        "ensemble_weights": [0.5, 0.5],
+        "llm_model": "gpt-4o",
+        "provider": "openai",
+        "embedding_model": "text-embedding-3-small",
+        "execution_time": 2.67,
+        "input_tokens": 1678,
+        "output_tokens": 203,
+        "total_cost": 0.002389
+    }
+}
+```
+
+## When to Use This Approach
+
+### Best For
+
+- **Mixed query types**: Questions that combine specific terms with conceptual meaning
+- **Medical terminology**: Queries with exact drug names, procedures, or diagnostic terms
+- **Acronyms and abbreviations**: Terms like "IMC" (BMI) or "VIH" (HIV)
+- **Recall improvement**: When semantic search alone misses important keyword matches
+- **General robustness**: When you want consistent performance across diverse query types
+
+### Advantages Over Simple Semantic
+
+- **Better keyword coverage**: BM25 catches exact term matches that embeddings might miss
+- **Reduced vocabulary gap**: Lexical search doesn't depend on semantic similarity
+- **Complementary retrieval**: Each method covers the other's blind spots
+- **Improved recall**: More likely to retrieve all relevant documents
+
+### Limitations
+
+- **No explicit rank fusion**: Simple weighted averaging may not optimally combine scores
+- **Fixed weights**: Ensemble weights are static, not query-adaptive
+- **Potential redundancy**: Both retrievers may return very similar documents
+- **Higher complexity**: Requires maintaining two separate indexes
+
+<Warning>
+The ensemble weights (0.5/0.5) work well as a default, but you may want to tune them based on your specific corpus and query distribution. More technical queries may benefit from higher BM25 weight.
+</Warning>
+
+## Performance Characteristics
+
+### Speed
+
+- **Moderate latency**: ~2-4 seconds (two retrievers + fusion)
+- **Parallel retrieval**: Both methods can run concurrently
+- **Minimal overhead**: Simple weighted fusion is computationally cheap
+
+### Cost
+
+- **Embedding cost**: Same as simple semantic (~$0.00001 per query)
+- **LLM cost**: Same as simple semantic (~$0.002-0.005 per query)
+- **No additional API costs**: BM25 runs locally
+- **Total**: Slightly higher than simple semantic due to longer context
+
+### Quality
+
+- **Higher recall**: More likely to retrieve all relevant documents
+- **Better precision**: Keyword matching reduces false positives from semantic drift
+- **More diverse results**: Different retrieval methods surface different documents
+- **Robust performance**: Consistent across various query types
+
+## Comparison with Other Architectures
+
+<CodeGroup>
+
+```python Simple Semantic Only
+# Pure semantic - may miss keyword matches
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+retrieved_docs = retriever.invoke(query)
+```
+
+```python Hybrid (This Architecture)
+# Combines BM25 + Semantic with weighted fusion
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[0.5, 0.5]
+)
+retrieved_docs = ensemble_retriever.invoke(query)
+```
+
+```python Hybrid RRF (Advanced)
+# Separate retrieval + Reciprocal Rank Fusion
+bm25_docs = bm25_retriever.invoke(query)
+semantic_docs = semantic_retriever.invoke(query)
+fused_docs = reciprocal_rank_fusion([bm25_docs, semantic_docs])
+```
+
+</CodeGroup>
+
+## Tuning Ensemble Weights
+
+You can adjust the balance between lexical and semantic retrieval:
+
+```python
+# More emphasis on keyword matching (good for technical queries)
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[0.7, 0.3]  # 70% BM25, 30% semantic
+)
+
+# More emphasis on semantic understanding (good for conceptual queries)
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[0.3, 0.7]  # 30% BM25, 70% semantic
+)
+
+# Balanced (default)
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[0.5, 0.5]  # Equal weight
+)
+```
+
+## Source Files
+
+- Implementation: `~/workspace/source/src/rag/hybrid.py:134-173`
+- Evaluation interface: `~/workspace/source/src/rag/hybrid.py:176-242`
+- Document loading: `~/workspace/source/src/rag/hybrid.py:46-54`

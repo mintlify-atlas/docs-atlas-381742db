@@ -1,0 +1,398 @@
+---
+title: "Usage Metrics"
+description: "Provider-agnostic token usage and cost extraction helpers for LLM response metadata"
+---
+
+## Overview
+
+The `usage_metrics` module provides provider-agnostic utilities for extracting token usage and cost information from LLM response messages. It handles the variations in metadata structure across different providers (OpenAI, HuggingFace, etc.) and ensures consistent usage tracking.
+
+## extract_usage_from_ai_message()
+
+Extract token usage from LLM response message in a provider-agnostic way.
+
+### Signature
+
+```python
+def extract_usage_from_ai_message(message: Any) -> Dict[str, int | str]
+```
+
+### Parameters
+
+<ParamField path="message" type="Any" required>
+  LLM response message object (typically AIMessage from LangChain)
+</ParamField>
+
+### Returns
+
+<ResponseField name="usage" type="Dict[str, int | str]">
+  Dictionary containing:
+  - `input_tokens` (int): Number of input/prompt tokens
+  - `output_tokens` (int): Number of output/completion tokens
+  - `total_tokens` (int): Total tokens (input + output)
+  - `usage_source` (str): Source of usage data ("usage_metadata", "response_metadata", or "missing")
+</ResponseField>
+
+### Extraction Priority
+
+The function searches for usage information in the following order:
+
+1. `message.usage_metadata` (LangChain standard)
+2. `message.response_metadata["token_usage"]`
+3. `message.response_metadata["usage"]`
+4. Returns zeros if not found
+
+### Field Name Mapping
+
+The function handles multiple field name variations:
+
+- **Input tokens**: `input_tokens`, `prompt_tokens`, `input`
+- **Output tokens**: `output_tokens`, `completion_tokens`, `output`
+- **Total tokens**: `total_tokens`, `total`
+
+If `total_tokens` is not provided or is 0, it's calculated as `input_tokens + output_tokens`.
+
+### Example
+
+```python
+from src.common.usage_metrics import extract_usage_from_ai_message
+from src.common.model_provider import create_llm, MODELS_REGISTRY
+
+# Create LLM and get response
+llm = create_llm(MODELS_REGISTRY["gpt-5"])
+message = llm.invoke("Explain preeclampsia pathophysiology.")
+
+# Extract usage
+usage = extract_usage_from_ai_message(message)
+
+print(f"Input tokens: {usage['input_tokens']}")
+print(f"Output tokens: {usage['output_tokens']}")
+print(f"Total tokens: {usage['total_tokens']}")
+print(f"Usage source: {usage['usage_source']}")
+
+# Example output:
+# Input tokens: 45
+# Output tokens: 523
+# Total tokens: 568
+# Usage source: usage_metadata
+```
+
+### Usage Sources
+
+<ResponseField name="usage_metadata" type="str">
+  Token usage was found in `message.usage_metadata` (LangChain standard location)
+</ResponseField>
+
+<ResponseField name="response_metadata" type="str">
+  Token usage was found in `message.response_metadata["token_usage"]` or `message.response_metadata["usage"]`
+</ResponseField>
+
+<ResponseField name="missing" type="str">
+  No token usage information found; all token counts are 0
+</ResponseField>
+
+## extract_cost_from_ai_message()
+
+Extract provider-reported cost from LLM response message when available.
+
+### Signature
+
+```python
+def extract_cost_from_ai_message(message: Any) -> Dict[str, Optional[float] | str]
+```
+
+### Parameters
+
+<ParamField path="message" type="Any" required>
+  LLM response message object (typically AIMessage from LangChain)
+</ParamField>
+
+### Returns
+
+<ResponseField name="cost" type="Dict[str, Optional[float] | str]">
+  Dictionary containing:
+  - `total_cost` (Optional[float]): Provider-reported cost in USD, or None if not available
+  - `cost_source` (str): Source of cost data ("response_metadata", "response_metadata.usage", "response_metadata.billing", or "missing")
+</ResponseField>
+
+### Extraction Priority
+
+The function searches for cost information in the following order:
+
+1. Direct fields in `response_metadata`: `total_cost`, `cost`, `usd_cost`
+2. Fields in `response_metadata["usage"]`: `total_cost`, `cost`, `usd_cost`
+3. Fields in `response_metadata["billing"]`: `total_cost`, `cost`, `usd_cost`
+4. Returns None if not found
+
+### Important Behavior
+
+<Note>
+  This function **intentionally does not estimate cost** from a local price table. If the provider does not return billing metadata, cost is reported as missing. Use the `pricing.resolve_total_cost()` function for cost estimation.
+</Note>
+
+### Example
+
+```python
+from src.common.usage_metrics import extract_cost_from_ai_message
+from src.common.model_provider import create_llm, MODELS_REGISTRY
+
+# Create LLM and get response
+llm = create_llm(MODELS_REGISTRY["gpt-5"])
+message = llm.invoke("Explain preeclampsia pathophysiology.")
+
+# Extract provider-reported cost
+cost = extract_cost_from_ai_message(message)
+
+if cost["total_cost"] is not None:
+    print(f"Provider-reported cost: ${cost['total_cost']:.6f}")
+    print(f"Cost source: {cost['cost_source']}")
+else:
+    print(f"No provider-reported cost available: {cost['cost_source']}")
+
+# Example output (if provider reports cost):
+# Provider-reported cost: $0.005423
+# Cost source: response_metadata
+
+# Example output (if provider doesn't report cost):
+# No provider-reported cost available: missing
+```
+
+### Cost Sources
+
+<ResponseField name="response_metadata" type="str">
+  Cost was found in direct fields of `message.response_metadata`
+</ResponseField>
+
+<ResponseField name="response_metadata.usage" type="str">
+  Cost was found in `message.response_metadata["usage"]`
+</ResponseField>
+
+<ResponseField name="response_metadata.billing" type="str">
+  Cost was found in `message.response_metadata["billing"]`
+</ResponseField>
+
+<ResponseField name="missing" type="str">
+  No provider-reported cost found; `total_cost` is None
+</ResponseField>
+
+## Complete Usage Tracking Example
+
+### Track Usage and Cost for Single Query
+
+```python
+from src.common.model_provider import create_llm, get_model_identity, MODELS_REGISTRY
+from src.common.usage_metrics import extract_usage_from_ai_message, extract_cost_from_ai_message
+from src.common.pricing import resolve_total_cost
+import time
+
+def track_llm_call(model_name: str, prompt: str) -> dict:
+    """Track usage and cost for a single LLM call."""
+    
+    # Create model
+    config = MODELS_REGISTRY[model_name]
+    llm = create_llm(config)
+    
+    # Get model identity
+    identity = get_model_identity(model_name=model_name, llm=llm)
+    
+    # Make call and track time
+    start_time = time.time()
+    message = llm.invoke(prompt)
+    execution_time = time.time() - start_time
+    
+    # Extract usage and cost
+    usage = extract_usage_from_ai_message(message)
+    cost_info = extract_cost_from_ai_message(message)
+    
+    # Resolve final cost
+    cost_result = resolve_total_cost(
+        provider=identity["provider"],
+        model_name=identity["model_name"],
+        model_id=identity["model_id"],
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        provider_reported_cost=cost_info["total_cost"],
+        provider_cost_source=cost_info["cost_source"],
+        execution_time_seconds=execution_time,
+    )
+    
+    return {
+        "model": identity["model_name"],
+        "provider": identity["provider"],
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "total_tokens": usage["total_tokens"],
+        "usage_source": usage["usage_source"],
+        "total_cost": cost_result["total_cost"],
+        "cost_source": cost_result["cost_source"],
+        "execution_time": execution_time,
+        "response": message.content,
+    }
+
+# Example usage
+result = track_llm_call(
+    model_name="gpt-5",
+    prompt="Explain the pathophysiology of preeclampsia."
+)
+
+print(f"Model: {result['model']}")
+print(f"Tokens: {result['input_tokens']} in / {result['output_tokens']} out")
+print(f"Cost: ${result['total_cost']:.6f} ({result['cost_source']})")
+print(f"Time: {result['execution_time']:.2f}s")
+```
+
+### Aggregate Metrics Across Multiple Queries
+
+```python
+from src.common.usage_metrics import extract_usage_from_ai_message, extract_cost_from_ai_message
+from collections import defaultdict
+
+class UsageAggregator:
+    """Aggregate usage and cost metrics across multiple LLM calls."""
+    
+    def __init__(self):
+        self.metrics = defaultdict(lambda: {
+            "calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "total_cost": 0.0,
+        })
+    
+    def record_call(self, model_name: str, message: Any, resolved_cost: float):
+        """Record metrics from a single LLM call."""
+        usage = extract_usage_from_ai_message(message)
+        
+        m = self.metrics[model_name]
+        m["calls"] += 1
+        m["input_tokens"] += usage["input_tokens"]
+        m["output_tokens"] += usage["output_tokens"]
+        m["total_tokens"] += usage["total_tokens"]
+        m["total_cost"] += resolved_cost
+    
+    def get_summary(self) -> dict:
+        """Get aggregated metrics summary."""
+        return dict(self.metrics)
+    
+    def print_summary(self):
+        """Print formatted summary."""
+        print("\nUsage Summary:")
+        print("=" * 60)
+        
+        for model, metrics in self.metrics.items():
+            print(f"\nModel: {model}")
+            print(f"  Calls: {metrics['calls']}")
+            print(f"  Input tokens: {metrics['input_tokens']:,}")
+            print(f"  Output tokens: {metrics['output_tokens']:,}")
+            print(f"  Total tokens: {metrics['total_tokens']:,}")
+            print(f"  Total cost: ${metrics['total_cost']:.4f}")
+            if metrics['calls'] > 0:
+                avg_cost = metrics['total_cost'] / metrics['calls']
+                print(f"  Avg cost/call: ${avg_cost:.6f}")
+
+# Example usage
+aggregator = UsageAggregator()
+
+# Record multiple calls
+for prompt in prompts:
+    message = llm.invoke(prompt)
+    cost_result = resolve_total_cost(...)  # ... as shown above
+    aggregator.record_call("gpt-5", message, cost_result["total_cost"])
+
+# Print summary
+aggregator.print_summary()
+```
+
+## Utility Functions
+
+### Internal Helpers
+
+The module includes internal utility functions for safe type coercion:
+
+```python
+# Convert to non-negative int (internal use)
+def _to_int(value: Any) -> int:
+    """Safely coerce values to non-negative integers.
+    Returns 0 if value is None, invalid, or negative.
+    """
+
+# Convert to non-negative float (internal use)
+def _to_float(value: Any) -> Optional[float]:
+    """Safely coerce values to non-negative floats.
+    Returns None if value is None or invalid.
+    Returns 0.0 if value is negative.
+    """
+```
+
+These functions ensure robust handling of various metadata formats and prevent errors from unexpected data types.
+
+## Provider Compatibility
+
+### Supported Providers
+
+<CardGroup cols={2}>
+  <Card title="OpenAI" icon="openai">
+    Full support for usage_metadata and response_metadata extraction
+  </Card>
+  <Card title="HuggingFace" icon="huggingface">
+    Full support for TGI and Inference Endpoint metadata
+  </Card>
+  <Card title="Other Providers" icon="cloud">
+    Graceful fallback with missing source indicator
+  </Card>
+</CardGroup>
+
+### Metadata Structure Variations
+
+The module handles these common metadata structures:
+
+**LangChain Standard (usage_metadata):**
+```python
+message.usage_metadata = {
+    "input_tokens": 45,
+    "output_tokens": 523,
+    "total_tokens": 568
+}
+```
+
+**OpenAI Format:**
+```python
+message.response_metadata = {
+    "usage": {
+        "prompt_tokens": 45,
+        "completion_tokens": 523,
+        "total_tokens": 568
+    }
+}
+```
+
+**HuggingFace TGI Format:**
+```python
+message.response_metadata = {
+    "token_usage": {
+        "input": 45,
+        "output": 523,
+        "total": 568
+    }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always extract usage before cost calculation">
+    Token usage information is required for cost estimation. Always call `extract_usage_from_ai_message()` before `resolve_total_cost()`.
+  </Accordion>
+  
+  <Accordion title="Check usage_source for data quality">
+    Monitor the `usage_source` field to identify when usage data is missing. This helps catch configuration issues early.
+  </Accordion>
+  
+  <Accordion title="Use provider-reported cost when available">
+    Provider-reported costs are more accurate than estimates. Always prefer `extract_cost_from_ai_message()` results when `total_cost` is not None.
+  </Accordion>
+  
+  <Accordion title="Aggregate metrics for batch operations">
+    For evaluating multiple examples, aggregate metrics across all calls to get total costs and average usage patterns.
+  </Accordion>
+</AccordionGroup>

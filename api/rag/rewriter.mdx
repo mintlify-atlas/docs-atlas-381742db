@@ -1,0 +1,298 @@
+---
+title: Multi-Query Rewriter RAG
+description: RAG pipeline using multi-query rewriting for enhanced retrieval coverage
+---
+
+## Overview
+
+The Multi-Query Rewriter RAG module implements a RAG pipeline that generates multiple variations of the user's question to improve document retrieval. It creates three different query reformulations, retrieves documents for each, combines and re-ranks the results, then synthesizes a final answer.
+
+**Module:** `src.rag.rewriter`
+
+**Source:** `src/rag/rewriter.py`
+
+## Configuration
+
+### Default Models
+
+```python
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+llm_rewriter = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.3)
+llm_answer = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+### Retriever Configuration
+
+```python
+base_retriever = vectorstore.as_retriever(
+    search_type="similarity_score_threshold",
+    search_kwargs={"k": 5, "score_threshold": 0.05}
+)
+```
+
+Uses similarity search with a score threshold to filter low-quality results.
+
+## Query Rewriting Templates
+
+The module uses three different rewriting strategies:
+
+### Template 1: Standalone Query
+
+```python
+REPHRASE_TEMPLATE_1 = """Rewrite this question to be a standalone, specific query about pregnancy and childbirth.
+
+Original question: {question}
+
+Instructions:
+- Maintain the medical/obstetric context if relevant.
+- Be specific and clear in medical terms.
+- Focus on pregnancy, childbirth, prenatal care, or maternal health.
+- Ensure the question is complete and self-contained.
+
+Standalone question:"""
+```
+
+### Template 2: Synonym-Based Rephrasing
+
+```python
+REPHRASE_TEMPLATE_2 = """Rephrase this question about pregnancy and childbirth using synonyms and alternative medical terms.
+
+Original question: {question}
+
+Instructions:
+- Use precise medical terminology.
+- Include synonyms and alternative terms.
+- Maintain the meaning but change the wording.
+- Focus on clinical and obstetric aspects.
+
+Rephrased question:"""
+```
+
+### Template 3: Expanded Context
+
+```python
+REPHRASE_TEMPLATE_3 = """Expand this question to include related aspects and additional context about pregnancy and childbirth.
+
+Base question: {question}
+
+Instructions:
+- Expand the question to include related aspects.
+- Add context about complications, prevention, or care.
+- Include possible variations or special cases.
+- Keep the focus on maternal and perinatal health.
+
+Expanded question:"""
+```
+
+## Functions
+
+### format_docs
+
+```python
+def format_docs(docs: List[Document]) -> str
+```
+
+Formats documents for the context, indicating relevance.
+
+<ParamField path="docs" type="List[Document]" required>
+  List of documents to format
+</ParamField>
+
+<ResponseField name="return" type="str">
+  Formatted string with documents labeled by relevance (High/Medium/Low)
+</ResponseField>
+
+**Example Output:**
+```
+--- DOCUMENT 1 (Relevance: High) ---
+Source: guide.pdf
+Content: [content]
+
+--- DOCUMENT 2 (Relevance: High) ---
+Source: guide.pdf
+Content: [content]
+```
+
+### process_rewriter_query
+
+```python
+def process_rewriter_query(
+    question: str, 
+    custom_rewriter_llm: ChatOpenAI = None,
+    custom_answer_llm: ChatOpenAI = None,
+    max_final_docs: int = 8
+) -> Dict[str, Any]
+```
+
+Processes a query using the multi-query rewriting RAG pipeline.
+
+<ParamField path="question" type="str" required>
+  The user's question
+</ParamField>
+
+<ParamField path="custom_rewriter_llm" type="ChatOpenAI" default="None">
+  Custom model for query rewriting. Defaults to gpt-3.5-turbo with temperature=0.3
+</ParamField>
+
+<ParamField path="custom_answer_llm" type="ChatOpenAI" default="None">
+  Custom model for answer generation. Defaults to gpt-4o with temperature=0
+</ParamField>
+
+<ParamField path="max_final_docs" type="int" default="8">
+  The maximum number of documents to return after deduplication and re-ranking
+</ParamField>
+
+<ResponseField name="return" type="Dict[str, Any]">
+  Dictionary containing:
+  - `answer` (str): The generated answer
+  - `contexts` (List[str]): Retrieved document contents
+  - `retrieved_documents` (List[Document]): Full document objects
+  - `rewritten_queries` (List[str]): The 3 generated query variations
+  - `metrics` (dict):
+    - `rewrite_input_tokens` (int): Tokens used for rewriting
+    - `rewrite_output_tokens` (int): Tokens generated during rewriting
+    - `rewrite_cost` (float): Cost of rewriting
+    - `answer_input_tokens` (int): Tokens used for answer
+    - `answer_output_tokens` (int): Tokens generated for answer
+    - `answer_cost` (float): Cost of answer generation
+    - `total_input_tokens` (int): Total input tokens
+    - `total_output_tokens` (int): Total output tokens
+    - `total_cost` (float): Total cost in USD
+    - `usage_source` (str): Source of usage data
+    - `cost_source` (str): Source of cost calculation
+</ResponseField>
+
+### query_for_evaluation
+
+```python
+def query_for_evaluation(
+    question: str,
+    rewriter_model: str = None,
+    answer_model: str = None,
+    custom_rewriter_llm: Optional[BaseChatModel] = None,
+    custom_answer_llm: Optional[BaseChatModel] = None
+) -> dict
+```
+
+A wrapper function for RAG evaluation frameworks like Ragas.
+
+<ParamField path="question" type="str" required>
+  The question to process
+</ParamField>
+
+<ParamField path="rewriter_model" type="str" default="None">
+  The name of the LLM model to use for query rewriting. Defaults to "gpt-3.5-turbo"
+</ParamField>
+
+<ParamField path="answer_model" type="str" default="None">
+  The name of the LLM model to use for answer generation. Defaults to "gpt-4o"
+</ParamField>
+
+<ParamField path="custom_rewriter_llm" type="BaseChatModel" default="None">
+  Pre-configured LLM for rewriting. Takes precedence over rewriter_model
+</ParamField>
+
+<ParamField path="custom_answer_llm" type="BaseChatModel" default="None">
+  Pre-configured LLM for answer. Takes precedence over answer_model
+</ParamField>
+
+<ResponseField name="return" type="dict">
+  Dictionary containing:
+  - `question` (str): Original question
+  - `answer` (str): Generated answer
+  - `contexts` (List[str]): Retrieved document contents
+  - `source_documents` (List[Document]): Full retrieved documents
+  - `metadata` (dict): Comprehensive metadata including:
+    - `num_contexts` (int): Number of contexts
+    - `retrieval_method` (str): "multi_query_rewrite"
+    - `rewrite_count` (int): Number of query variations (3)
+    - `llm_model` (str): Answer model name
+    - `rewriter_model` (str): Rewriter model name
+    - `provider` (str): Answer provider
+    - `model_id` (str): Answer model ID
+    - `rewriter_provider` (str): Rewriter provider
+    - `rewriter_model_id` (str): Rewriter model ID
+    - `execution_time` (float): Total execution time
+    - `input_tokens` (int): Total input tokens
+    - `output_tokens` (int): Total output tokens
+    - `total_cost` (float): Total cost in USD
+    - `tokens_used` (int): Total tokens
+    - `usage_source` (str): Usage data source
+    - `cost_source` (str): Cost calculation source
+</ResponseField>
+
+## Usage Example
+
+```python
+from src.rag.rewriter import query_for_evaluation
+
+# Basic usage
+result = query_for_evaluation(
+    question="¿Cuáles son los signos del parto?"
+)
+
+print(result["answer"])
+print(f"Retrieval method: {result['metadata']['retrieval_method']}")
+print(f"Query variations: {result['metadata']['rewrite_count']}")
+print(f"Total cost: ${result['metadata']['total_cost']:.6f}")
+
+# Access the rewritten queries from the detailed result
+from src.rag.rewriter import process_rewriter_query
+
+detailed_result = process_rewriter_query(
+    question="¿Qué es la preeclampsia?"
+)
+
+print("Rewritten queries:")
+for i, query in enumerate(detailed_result['rewritten_queries'], 1):
+    print(f"{i}. {query}")
+
+# Using custom models
+from langchain_openai import ChatOpenAI
+
+rewriter_llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.5)
+answer_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+
+result = query_for_evaluation(
+    question="¿Cuándo es necesaria una cesárea?",
+    custom_rewriter_llm=rewriter_llm,
+    custom_answer_llm=answer_llm
+)
+```
+
+## Pipeline Flow
+
+1. **Generate Queries**: Creates 3 query variations using gpt-3.5-turbo (temp=0.3):
+   - Standalone specific query
+   - Synonym-based rephrasing
+   - Expanded contextual query
+2. **Retrieve**: Performs semantic search for each query variation (top 5 per query)
+3. **Deduplicate**: Removes duplicate documents using content-based IDs
+4. **Weight & Re-rank**: Applies query-based weighting (later queries get 5% penalty)
+5. **Select**: Chooses top 8 documents after re-ranking
+6. **Format**: Formats documents with relevance indicators
+7. **Generate**: Uses gpt-4o (temp=0) to generate final answer
+8. **Track**: Captures separate metrics for rewriting and answer generation
+
+## Query Weighting Strategy
+
+```python
+# Penalize queries from later, more speculative prompts
+query_weight = 1.0 - (query_index - 1) * 0.05
+```
+
+- Query 1: weight = 1.0 (100%)
+- Query 2: weight = 0.95 (95%)
+- Query 3: weight = 0.90 (90%)
+
+This prioritizes the standalone query while still considering alternative formulations.
+
+## Key Features
+
+- **Multi-perspective retrieval**: 3 different query formulations
+- **Automatic deduplication**: Removes duplicate documents across queries
+- **Intelligent weighting**: Prioritizes more direct query reformulations
+- **High coverage**: Up to 15 candidates (3 queries × 5 docs)
+- **Relevance labeling**: Documents marked as High/Medium/Low relevance
+- **Dual cost tracking**: Separate metrics for rewriting and answer generation
+- **Temperature tuning**: 0.3 for rewriting (balanced), 0 for answer (precise)

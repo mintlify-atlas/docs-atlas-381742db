@@ -1,80 +1,217 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get up and running with your first RAG evaluation in under 5 minutes"
 ---
 
-## Get started in three steps
+Get your first RAG evaluation running in minutes. This guide walks you through installation, setup, and running your first benchmark.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, ensure you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+- **Python 3.8 or higher** installed on your system
+- An **OpenAI API key** for embeddings and LLM access
+- **Git** for cloning the repository
+- **10-15 minutes** for the initial setup
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The initial embedding generation takes 2-3 minutes. Subsequent evaluations run much faster (30 seconds - 2 minutes depending on the RAG architecture).
 </Note>
+
+## Quick Setup
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the project and navigate to the directory:
+    
+    ```bash
+    git clone https://github.com/JhonHander/obstetrics-rag-benchmark.git
+    cd obstetrics-rag-benchmark
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    Install all required Python packages:
+    
+    ```bash
+    pip install -r requirements.txt
+    ```
+    
+    This installs LangChain, ChromaDB, RAGAS, and all necessary dependencies.
+  </Step>
+
+  <Step title="Configure API Key">
+    Create a `.env` file in the project root with your OpenAI API key:
+    
+    ```bash
+    echo "OPENAI_API_KEY=your_api_key_here" > .env
+    ```
+    
+    Replace `your_api_key_here` with your actual OpenAI API key from [platform.openai.com](https://platform.openai.com/api-keys).
+  </Step>
+
+  <Step title="Generate Embeddings">
+    Create vector embeddings from the medical text corpus:
+    
+    ```bash
+    python scripts/create_embeddings.py
+    ```
+    
+    <Info>
+      This step loads text chunks from `data/chunks/chunks_final.json`, generates embeddings using OpenAI's text-embedding-3-small model, and stores them in ChromaDB at `data/embeddings/chroma_db/`.
+    </Info>
+    
+    Expected output:
+    ```
+    Loading chunks from: data/chunks/chunks_final.json
+    Loaded 156 chunks
+    Creating embeddings and storing in ChromaDB...
+    Successfully stored 156 chunks in ChromaDB
+    ```
+  </Step>
+
+  <Step title="Run Your First Evaluation">
+    Execute a RAG evaluation using the Hybrid architecture:
+    
+    ```bash
+    python scripts/run_evaluation.py hybrid
+    ```
+    
+    This will:
+    - Load 10 medical questions from the evaluation dataset
+    - Run the Hybrid RAG (BM25 + Semantic) on each question
+    - Generate answers using GPT-4o
+    - Evaluate with RAGAS metrics
+    - Display results and save to `results/`
+  </Step>
+
+  <Step title="View Results">
+    Check the console output for metric scores:
+    
+    ```
+    ==================== RAGAS Evaluation Results ====================
+    RAG Type: hybrid
+    Model: gpt-4o
+    
+    Faithfulness:       0.8542
+    Answer Relevancy:   0.7891
+    Context Precision:  0.9123
+    Context Recall:     0.7654
+    ```
+    
+    Results are also saved as JSON in the `results/` directory with timestamp.
+  </Step>
+</Steps>
+
+## Try Different RAG Architectures
+
+Now that you have the system running, try evaluating different RAG strategies:
+
+<CodeGroup>
+
+```bash Simple Semantic
+python scripts/run_evaluation.py simple
+```
+
+```bash Hybrid (BM25 + Semantic)
+python scripts/run_evaluation.py hybrid
+```
+
+```bash Hybrid with RRF
+python scripts/run_evaluation.py hybrid-rrf
+```
+
+```bash HyDE (Hypothetical Documents)
+python scripts/run_evaluation.py hyde
+```
+
+```bash Query Rewriter
+python scripts/run_evaluation.py rewriter
+```
+
+```bash PageIndex
+python scripts/run_evaluation.py pageindex
+```
+
+</CodeGroup>
+
+## Understanding the Output
+
+Each evaluation provides four key metrics:
+
+| Metric | Range | What It Measures |
+|--------|-------|------------------|
+| **Faithfulness** | 0.0 - 1.0 | How well the answer is grounded in retrieved context (lower = more hallucination) |
+| **Answer Relevancy** | 0.0 - 1.0 | How directly the answer addresses the question |
+| **Context Precision** | 0.0 - 1.0 | Proportion of retrieved context that is relevant |
+| **Context Recall** | 0.0 - 1.0 | Completeness of retrieval (did we get all relevant info?) |
+
+<Tip>
+  Higher scores are better for all metrics. Scores above 0.8 indicate excellent performance.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Compare Architectures" icon="scale-balanced" href="/concepts/rag-architectures">
+    Learn about the 6 different RAG strategies and when to use each
+  </Card>
+  <Card title="Run Benchmarks" icon="chart-bar" href="/evaluation/benchmarking">
+    Compare all RAG architectures across multiple models
+  </Card>
+  <Card title="Extend the Research" icon="flask" href="/guides/extending-research">
+    Add your own RAG architectures or models
+  </Card>
+</CardGroup>
+
+## Available Commands
+
+Here's a quick reference of evaluation commands:
+
+| Command | Description |
+|---------|-------------|
+| `python scripts/run_evaluation.py simple` | Evaluate Simple Semantic RAG |
+| `python scripts/run_evaluation.py hybrid` | Evaluate Hybrid RAG (BM25 + Semantic) |
+| `python scripts/run_evaluation.py hyde` | Evaluate HyDE RAG |
+| `python scripts/run_evaluation.py rewriter` | Evaluate Query Rewriter RAG |
+| `python scripts/run_evaluation.py multi-model hybrid` | Run Hybrid RAG across all available models |
+| `python scripts/run_evaluation.py all-models-all-rags` | Comprehensive benchmark (all RAGs × all models) |
+
+<Warning>
+  The comprehensive benchmark (`all-models-all-rags`) evaluates all RAG architectures across multiple models and can take 15-30 minutes to complete. It also incurs higher API costs.
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="OpenAI API Key Error">
+    If you see `OPENAI_API_KEY not found`, ensure:
+    - Your `.env` file exists in the project root
+    - The key is formatted as `OPENAI_API_KEY=sk-...`
+    - There are no quotes around the key value
+  </Accordion>
+  
+  <Accordion title="ChromaDB Not Found">
+    If embeddings aren't found, run the embedding creation step:
+    ```bash
+    python scripts/create_embeddings.py
+    ```
+  </Accordion>
+  
+  <Accordion title="Import Errors">
+    If you get import errors, reinstall dependencies:
+    ```bash
+    pip install --upgrade -r requirements.txt
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## What You've Accomplished
+
+You've successfully:
+- ✅ Installed the Obstetrics RAG Benchmark
+- ✅ Generated vector embeddings for medical text
+- ✅ Run your first RAG evaluation
+- ✅ Viewed RAGAS metrics for retrieval and generation quality
+
+Ready to dive deeper? Explore the [Core Concepts](/concepts/overview) to understand how RAG architectures work, or jump into [Running Evaluations](/evaluation/running-evaluations) for advanced benchmarking options.

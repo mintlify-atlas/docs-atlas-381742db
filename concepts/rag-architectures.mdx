@@ -1,0 +1,566 @@
+---
+title: 'RAG Architectures'
+description: 'Detailed comparison of 6 retrieval strategies for medical question-answering'
+icon: 'sitemap'
+---
+
+## Overview
+
+This project implements and compares **6 distinct RAG architectures**, each representing a different approach to retrieving and using medical knowledge. Understanding these architectures is crucial for selecting the right strategy for your use case.
+
+<Note>
+**Performance vs. Complexity Trade-off**
+
+More sophisticated architectures often provide better results but at the cost of increased latency, token usage, and complexity. The benchmark helps identify which trade-offs are worthwhile for medical Q&A.
+</Note>
+
+## Architecture Comparison
+
+<CardGroup cols={2}>
+  <Card title="Simple Semantic" icon="1">
+    Baseline vector similarity search
+  </Card>
+  <Card title="Hybrid Search" icon="2">
+    BM25 lexical + semantic fusion
+  </Card>
+  <Card title="Hybrid + RRF" icon="3">
+    Reciprocal Rank Fusion with MMR
+  </Card>
+  <Card title="HyDE" icon="4">
+    Hypothetical document generation
+  </Card>
+  <Card title="Query Rewriter" icon="5">
+    Multi-query reformulation
+  </Card>
+  <Card title="PageIndex" icon="6">
+    External retrieval API
+  </Card>
+</CardGroup>
+
+---
+
+## 1. Simple Semantic RAG
+
+<Accordion title="Architecture Details" icon="magnifying-glass">
+
+### Strategy
+
+Direct vector similarity matching using dense embeddings. This is the baseline approach that all other architectures are compared against.
+
+### How It Works
+
+1. Convert the user's question into a dense embedding vector
+2. Search the ChromaDB vector store for documents with similar embeddings
+3. Return the top-k most similar documents (k=5 by default)
+4. Use these documents as context for the LLM to generate an answer
+
+### Implementation
+
+```python
+# Simple semantic retrieval
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+vectorstore = Chroma(
+    persist_directory="data/embeddings/chroma_db",
+    embedding_function=embeddings,
+    collection_name="guia_embarazo_parto"
+)
+
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+retrieved_docs = retriever.invoke(query)
+```
+
+### Characteristics
+
+**Strengths:**
+- Fast and efficient (single retrieval operation)
+- Simple to implement and maintain
+- Low token cost (no additional LLM calls)
+- Works well when queries are semantically similar to document content
+
+**Weaknesses:**
+- May miss documents with different wording but same meaning
+- Cannot handle vocabulary mismatch between query and documents
+- No keyword-based fallback for technical terms
+- Limited by embedding model's understanding
+
+### When to Use
+
+- Starting point for any RAG project (baseline)
+- When latency is critical
+- When token budget is limited
+- When queries naturally match document language
+
+### Performance Metrics
+
+- **Retrieval Time**: ~100-200ms
+- **Token Usage**: Only answer generation tokens
+- **Best For**: General medical questions with standard terminology
+
+</Accordion>
+
+---
+
+## 2. Hybrid RAG (BM25 + Semantic)
+
+<Accordion title="Architecture Details" icon="layer-group">
+
+### Strategy
+
+Combines lexical search (BM25) with semantic search using ensemble retrieval. This addresses vocabulary mismatch by using both keyword matching and semantic understanding.
+
+### How It Works
+
+1. **BM25 Retrieval**: Score documents based on keyword frequency and rarity (TF-IDF-like)
+2. **Semantic Retrieval**: Score documents based on embedding similarity
+3. **Ensemble Fusion**: Combine both ranked lists with configurable weights
+4. **Final Selection**: Return top-k documents from the fused ranking
+
+### Implementation
+
+```python
+# Lexical retriever (BM25)
+bm25_retriever = BM25Retriever.from_documents(documents)
+bm25_retriever.k = 5
+
+# Semantic retriever
+semantic_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+# Ensemble combination
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, semantic_retriever],
+    weights=[0.5, 0.5]  # Equal weighting
+)
+
+retrieved_docs = ensemble_retriever.invoke(query)
+```
+
+### Characteristics
+
+**Strengths:**
+- Handles both semantic similarity and exact keyword matches
+- Better coverage for technical medical terms
+- More robust to query variations
+- Balances precision and recall
+
+**Weaknesses:**
+- Slightly slower than simple semantic (two retrievals)
+- Requires loading full document corpus for BM25
+- Weight tuning may be needed for optimal results
+- No diversity control (may retrieve similar documents)
+
+### When to Use
+
+- Medical domains with technical terminology
+- When users ask questions with specific terms or acronyms
+- When semantic search alone misses relevant documents
+- General improvement over baseline at minimal cost
+
+### Configuration
+
+```python
+# Adjust weights to favor lexical or semantic
+weights=[0.3, 0.7]  # Favor semantic
+weights=[0.7, 0.3]  # Favor lexical
+weights=[0.5, 0.5]  # Equal balance (default)
+```
+
+</Accordion>
+
+---
+
+## 3. Hybrid RAG + RRF
+
+<Accordion title="Architecture Details" icon="ranking-star">
+
+### Strategy
+
+Enhanced hybrid search using **Reciprocal Rank Fusion (RRF)** for better rank aggregation, plus **Maximal Marginal Relevance (MMR)** for diversity.
+
+### How It Works
+
+1. **Retrieve More Candidates**: Get top-15 from both BM25 and semantic retrievers
+2. **RRF Fusion**: Combine rankings using reciprocal rank scores
+3. **MMR Selection**: Apply diversity filter to avoid redundant context
+4. **Final Selection**: Return top-5 diverse, relevant documents
+
+### Reciprocal Rank Fusion Formula
+
+```
+RRF_score(doc) = Σ [ 1 / (k + rank_i(doc)) ]
+```
+
+Where:
+- `k` is a constant (typically 60)
+- `rank_i(doc)` is the rank of the document in retriever `i`
+- Documents appearing in multiple rankings get boosted scores
+
+### Implementation
+
+```python
+def reciprocal_rank_fusion(rankings, k_constant=60, top_k=5):
+    scores = {}
+    for ranked_docs in rankings:
+        for rank, doc in enumerate(ranked_docs, start=1):
+            doc_id = get_document_id(doc)
+            scores[doc_id] = scores.get(doc_id, 0) + (1 / (k_constant + rank))
+    
+    sorted_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [doc for doc_id, score in sorted_docs[:top_k]]
+
+# Then apply MMR for diversity
+final_docs = mmr_select(query, rrf_docs, top_k=5, lambda_mult=0.7)
+```
+
+### Characteristics
+
+**Strengths:**
+- Better rank fusion than simple score averaging
+- Boosts documents that appear in multiple retrievers
+- MMR ensures diverse context (reduces redundancy)
+- More sophisticated than basic hybrid
+
+**Weaknesses:**
+- Additional embedding calls for MMR computation
+- More complex to implement and tune
+- Slightly higher latency
+- Benefits may be marginal for small document sets
+
+### When to Use
+
+- When document redundancy is a problem
+- Large knowledge bases with overlapping content
+- When you need both relevance and diversity
+- Research/evaluation scenarios requiring best-possible retrieval
+
+### Tuning Parameters
+
+```python
+k_bm25_candidates = 15      # Initial BM25 retrieval count
+k_semantic_candidates = 15  # Initial semantic retrieval count
+k_rrf_pool = 10            # Documents after RRF fusion
+k_final = 5                # Final documents after MMR
+rrf_k = 60                 # RRF constant
+mmr_lambda = 0.7           # MMR diversity (0=diverse, 1=relevant)
+```
+
+</Accordion>
+
+---
+
+## 4. HyDE RAG
+
+<Accordion title="Architecture Details" icon="wand-magic-sparkles">
+
+### Strategy
+
+**Hypothetical Document Embeddings** - Generate a hypothetical answer to the question, then search for documents similar to that answer rather than the question itself.
+
+### How It Works
+
+1. **Generate Hypothetical Answer**: Use an LLM to write what a perfect answer would look like
+2. **Embed the Answer**: Convert this hypothetical document to a vector
+3. **Search with Answer**: Find real documents similar to the hypothetical answer
+4. **Generate Final Answer**: Use retrieved documents to produce the actual answer
+
+### The Key Insight
+
+**Problem**: Questions and answers often use different language. "What is the ideal number of prenatal visits?" vs. "A primigravida should have 10 prenatal appointments..."
+
+**Solution**: Search for answer-like text, not question-like text.
+
+### Implementation
+
+```python
+# Step 1: Generate hypothetical document
+hyde_prompt = """
+You are a medical expert writing a detailed section for a medical guide.
+
+Based on this question: {question}
+
+Write a detailed medical document that would perfectly answer this question.
+Include accurate medical information, clinical details, and recommendations.
+"""
+
+hypothetical_doc = llm_hyde.invoke(hyde_prompt.format(question=query))
+
+# Step 2: Retrieve using the hypothetical document
+retrieved_docs = retriever.invoke(hypothetical_doc)
+
+# Step 3: Generate final answer with retrieved context
+final_answer = llm_answer.invoke(qa_prompt.format(
+    context=format_docs(retrieved_docs),
+    question=query
+))
+```
+
+### Characteristics
+
+**Strengths:**
+- Bridges vocabulary gap between questions and answers
+- Better retrieval when queries don't match document language
+- Particularly effective for "how-to" and explanatory questions
+- Can retrieve more relevant passages
+
+**Weaknesses:**
+- Requires TWO LLM calls (costly in tokens and time)
+- Hypothetical document may contain hallucinations
+- More complex error handling
+- Higher latency (2x LLM calls + retrieval)
+
+### When to Use
+
+- Complex medical questions requiring detailed explanations
+- When simple semantic search retrieves poor results
+- Questions phrased differently than source documents
+- When token cost is not the primary concern
+
+### Model Configuration
+
+```python
+# Use creative model for hypothesis, strong model for answer
+llm_hyde = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+llm_answer = ChatOpenAI(model_name="gpt-4o", temperature=0)
+```
+
+### Cost Analysis
+
+- **Token Overhead**: ~2-3x compared to simple semantic
+- **Latency Overhead**: ~2x due to sequential LLM calls
+- **Quality Improvement**: Typically 5-15% on retrieval metrics
+
+</Accordion>
+
+---
+
+## 5. Query Rewriter RAG
+
+<Accordion title="Architecture Details" icon="arrows-rotate">
+
+### Strategy
+
+**Multi-Query Reformulation** - Generate multiple variations of the user's question, retrieve documents for each variation, then fuse the results with relevance-based ranking.
+
+### How It Works
+
+1. **Generate Query Variations**: Create 3 different phrasings of the question
+   - Standalone reformulation
+   - Synonym replacement
+   - Expanded version with related aspects
+2. **Parallel Retrieval**: Retrieve documents for each query variation
+3. **Deduplication & Ranking**: Combine results with weighted relevance scoring
+4. **Generate Answer**: Use the diverse, high-quality context
+
+### Three Rewriting Strategies
+
+```python
+REPHRASE_TEMPLATE_1 = """
+Rewrite this question to be a standalone, specific query about 
+pregnancy and childbirth.
+
+Original: {question}
+Standalone question:
+"""
+
+REPHRASE_TEMPLATE_2 = """
+Rephrase this question using synonyms and alternative medical terms.
+
+Original: {question}
+Rephrased question:
+"""
+
+REPHRASE_TEMPLATE_3 = """
+Expand this question to include related aspects and additional context.
+
+Base question: {question}
+Expanded question:
+"""
+```
+
+### Implementation
+
+```python
+# Generate variations
+rewritten_queries = []
+for prompt in REPHRASE_PROMPTS:
+    variant = llm_rewriter.invoke(prompt.format(question=query))
+    rewritten_queries.append(variant)
+
+# Retrieve for each variant
+all_docs = []
+for i, variant_query in enumerate(rewritten_queries):
+    docs = vectorstore.similarity_search_with_score(variant_query, k=5)
+    
+    # Weight by query position (earlier queries more important)
+    query_weight = 1.0 - (i * 0.05)
+    for doc, score in docs:
+        all_docs.append((doc, score * query_weight))
+
+# Deduplicate and rank
+all_docs.sort(key=lambda x: x[1], reverse=True)
+final_docs = deduplicate(all_docs[:8])
+```
+
+### Characteristics
+
+**Strengths:**
+- Comprehensive coverage of different query interpretations
+- Discovers documents missed by single query
+- Handles ambiguous questions better
+- More robust to query phrasing
+
+**Weaknesses:**
+- Multiple LLM calls for rewriting (3 rewrites + 1 answer)
+- Multiple retrieval operations (3-4 retrievals)
+- Higher token and latency costs
+- Complexity in managing multiple retrievals
+
+### When to Use
+
+- Complex, ambiguous medical questions
+- When single-query retrieval is insufficient
+- Research scenarios requiring maximum recall
+- When you need diverse perspectives on a topic
+
+### Query Weighting Strategy
+
+Earlier query reformulations are weighted higher:
+
+```python
+# Query 1 (standalone): weight = 1.0
+# Query 2 (synonyms):   weight = 0.95
+# Query 3 (expanded):   weight = 0.90
+```
+
+This prevents overly broad reformulations from dominating results.
+
+### Performance Metrics
+
+- **LLM Calls**: 4 total (3 rewrites + 1 answer)
+- **Retrieval Operations**: 3 parallel retrievals
+- **Token Overhead**: ~3-4x vs baseline
+- **Latency**: ~2-3x vs baseline
+
+</Accordion>
+
+---
+
+## 6. PageIndex RAG
+
+<Accordion title="Architecture Details" icon="cloud">
+
+### Strategy
+
+Use an external retrieval API (PageIndex) that provides pre-indexed, optimized document retrieval with relevance highlighting.
+
+### How It Works
+
+1. **Submit Query**: Send question to PageIndex API
+2. **Wait for Processing**: Poll for completion (async retrieval)
+3. **Extract Contexts**: Parse retrieved nodes and relevant content snippets
+4. **Generate Answer**: Use PageIndex contexts with local LLM
+
+### Implementation
+
+```python
+from pageindex import PageIndexClient
+
+# Initialize client
+pageindex_client = PageIndexClient(api_key=PAGEINDEX_API_KEY)
+
+# Submit retrieval request
+retrieval_id = pageindex_client.create_retrieval(
+    doc_id=PAGEINDEX_DOC_ID,
+    query=query,
+    thinking=False
+)
+
+# Wait for completion
+retrieval_result = wait_for_completion(retrieval_id)
+
+# Extract contexts
+contexts = extract_contexts_from_retrieval(retrieval_result)
+
+# Generate answer
+answer = llm.invoke(qa_prompt.format(
+    context=format_contexts(contexts),
+    question=query
+))
+```
+
+### Characteristics
+
+**Strengths:**
+- Offloads retrieval complexity to external service
+- Potentially optimized retrieval algorithms
+- Relevant content highlighting
+- No local vector store management
+
+**Weaknesses:**
+- Depends on external service availability
+- API latency and rate limits
+- Requires document pre-indexing with PageIndex
+- Additional cost for API usage
+- Less control over retrieval process
+
+### When to Use
+
+- When you want managed retrieval infrastructure
+- Large document sets that are hard to manage locally
+- When PageIndex's retrieval is demonstrably better
+- Production systems needing reliability and scale
+
+### Configuration
+
+```bash
+# .env file
+PAGEINDEX_API_KEY=your_api_key
+PAGEINDEX_DOC_ID=pi-xxxx
+OPENAI_API_KEY=your_openai_key
+```
+
+</Accordion>
+
+---
+
+## Architecture Comparison Matrix
+
+| Architecture | LLM Calls | Retrievals | Complexity | Token Cost | Latency | Best Use Case |
+|--------------|-----------|------------|------------|------------|---------|---------------|
+| **Simple Semantic** | 1 | 1 | Low | Low | Fast | Baseline, simple queries |
+| **Hybrid** | 1 | 2 | Medium | Low | Fast | Technical terminology |
+| **Hybrid + RRF** | 1 | 2 | High | Medium | Medium | Diverse context needed |
+| **HyDE** | 2 | 1 | Medium | High | Slow | Question-answer gap |
+| **Query Rewriter** | 4 | 3 | High | High | Slow | Complex/ambiguous queries |
+| **PageIndex** | 1 | 1 (API) | Low | Low + API | Variable | Managed infrastructure |
+
+## Which Architecture Should You Choose?
+
+<CardGroup cols={2}>
+  <Card title="Start Simple" icon="rocket">
+    Begin with **Simple Semantic RAG** to establish baseline performance. It works well for most cases.
+  </Card>
+  
+  <Card title="Add Lexical Search" icon="plus">
+    Upgrade to **Hybrid RAG** if you need better handling of technical terms and keywords.
+  </Card>
+  
+  <Card title="Optimize Quality" icon="sparkles">
+    Try **HyDE** or **Query Rewriter** if retrieval quality is insufficient and token cost is acceptable.
+  </Card>
+  
+  <Card title="Maximize Performance" icon="trophy">
+    Use **Hybrid + RRF** for the best balance of quality and diversity in research scenarios.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Evaluation Framework" icon="chart-line" href="/concepts/evaluation-framework">
+    Learn how these architectures are evaluated with RAGAS
+  </Card>
+  
+  <Card title="Run Benchmarks" icon="play" href="/guides/running-evaluations">
+    Compare architectures on your own dataset
+  </Card>
+</CardGroup>

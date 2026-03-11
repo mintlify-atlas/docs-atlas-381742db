@@ -1,0 +1,315 @@
+---
+title: "Hybrid RAG with RRF"
+description: "Advanced hybrid retrieval using Reciprocal Rank Fusion and MMR diversification for optimal document selection"
+---
+
+## Overview
+
+Hybrid RAG with Reciprocal Rank Fusion (RRF) is an advanced retrieval architecture that:
+1. Retrieves candidates from both BM25 (lexical) and semantic retrievers
+2. Fuses the ranked lists using the RRF algorithm for optimal combination
+3. Applies Maximal Marginal Relevance (MMR) for result diversification
+
+This approach provides more sophisticated rank aggregation than simple weighted fusion and adds diversity to avoid redundant context.
+
+## How It Works
+
+### Pipeline Steps
+
+1. **Parallel Retrieval**: Query both BM25 and semantic retrievers for candidates (15 each by default)
+2. **Reciprocal Rank Fusion**: Combine ranked lists using RRF formula:
+   ```
+   RRF_score(d) = Σ(1 / (k + rank_i(d)))
+   ```
+   where `k=60` is a constant and `rank_i(d)` is the rank of document `d` in list `i`
+3. **Initial Pool Selection**: Select top 10 documents from RRF-fused results
+4. **MMR Diversification**: Apply MMR to select final 5 diverse, relevant documents
+5. **Answer Generation**: Generate answer from the diversified context
+
+<Note>
+RRF is more principled than weighted averaging because it's based on rank positions rather than raw scores, making it more robust to score scale differences between retrievers.
+</Note>
+
+## Key Features
+
+- **Reciprocal Rank Fusion**: Theoretically-grounded method for combining ranked lists
+- **Scale-invariant**: RRF works regardless of score ranges from different retrievers
+- **Result diversification**: MMR reduces redundancy in retrieved documents
+- **Tunable parameters**: Control candidate pool size, RRF constant, and diversity factor
+- **Higher candidate retrieval**: Retrieves more candidates (15 vs 5) to improve fusion quality
+
+## Implementation Details
+
+### Configuration Parameters
+
+```python
+# Retrieval settings
+k_bm25_candidates = 15      # BM25 candidate pool size
+k_semantic_candidates = 15  # Semantic candidate pool size
+k_rrf_pool = 10            # Documents after RRF fusion
+k_final = 5                # Final documents after MMR
+rrf_k = 60                 # RRF constant (typically 60)
+mmr_lambda = 0.7           # MMR diversity factor (0.7 = 70% relevance, 30% diversity)
+```
+
+### Reciprocal Rank Fusion Algorithm
+
+```python
+def reciprocal_rank_fusion(
+    rankings: List[List[Document]], 
+    k_constant: int = 60, 
+    top_k: int = 5
+) -> List[Document]:
+    """Fuses multiple ranked lists using RRF and returns top-k documents."""
+    scores: Dict[str, float] = {}
+    documents_by_id: Dict[str, Document] = {}
+    
+    for ranked_docs in rankings:
+        for rank, doc in enumerate(ranked_docs, start=1):
+            doc_id = _document_unique_id(doc)
+            # RRF formula: 1 / (k + rank)
+            scores[doc_id] = scores.get(doc_id, 0.0) + (1.0 / (k_constant + rank))
+            if doc_id not in documents_by_id:
+                documents_by_id[doc_id] = doc
+    
+    # Sort by RRF score descending
+    sorted_doc_ids = sorted(scores.keys(), key=lambda doc_id: scores[doc_id], reverse=True)
+    return [documents_by_id[doc_id] for doc_id in sorted_doc_ids[:top_k]]
+```
+
+### MMR Diversification
+
+```python
+def mmr_select(
+    query: str, 
+    candidate_docs: List[Document], 
+    top_k: int, 
+    lambda_mult: float = 0.7
+) -> List[Document]:
+    """
+    Selects top-k documents using MMR to balance relevance and diversity.
+    
+    MMR objective: λ * relevance(d, q) - (1-λ) * max_similarity(d, selected)
+    """
+    query_embedding = embeddings.embed_query(query)
+    doc_embeddings = embeddings.embed_documents([doc.page_content for doc in candidate_docs])
+    
+    relevance_scores = [_cosine_similarity(query_embedding, doc_vec) 
+                       for doc_vec in doc_embeddings]
+    
+    selected_indices: List[int] = []
+    remaining_indices = list(range(len(candidate_docs)))
+    
+    # First pick: most relevant to query
+    first_idx = max(remaining_indices, key=lambda idx: relevance_scores[idx])
+    selected_indices.append(first_idx)
+    remaining_indices.remove(first_idx)
+    
+    # Next picks: maximize MMR objective
+    while remaining_indices and len(selected_indices) < top_k:
+        best_idx = None
+        best_score = float("-inf")
+        
+        for idx in remaining_indices:
+            # Find max similarity to already selected docs
+            max_similarity_to_selected = max(
+                _cosine_similarity(doc_embeddings[idx], doc_embeddings[selected_idx])
+                for selected_idx in selected_indices
+            )
+            # MMR score: balance relevance and diversity
+            mmr_score = (lambda_mult * relevance_scores[idx]) - \
+                       ((1.0 - lambda_mult) * max_similarity_to_selected)
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_idx = idx
+        
+        if best_idx is None:
+            break
+        
+        selected_indices.append(best_idx)
+        remaining_indices.remove(best_idx)
+    
+    return [candidate_docs[idx] for idx in selected_indices]
+```
+
+### Complete Retrieval Pipeline
+
+```python
+def retrieve_hybrid_rrf(query: str) -> List[Document]:
+    """Retrieves candidates, fuses with RRF, then applies MMR diversification."""
+    # 1. Retrieve candidates from both retrievers
+    bm25_docs = bm25_retriever.invoke(query)           # 15 candidates
+    semantic_docs = semantic_retriever.invoke(query)   # 15 candidates
+    
+    # 2. Fuse using RRF
+    rrf_ranked_docs = reciprocal_rank_fusion(
+        [bm25_docs, semantic_docs],
+        k_constant=rrf_k,      # 60
+        top_k=k_rrf_pool,      # 10 documents
+    )
+    
+    # 3. Diversify using MMR
+    return mmr_select(
+        query=query, 
+        candidate_docs=rrf_ranked_docs, 
+        top_k=k_final,         # 5 final documents
+        lambda_mult=mmr_lambda # 0.7 (70% relevance, 30% diversity)
+    )
+```
+
+## Usage with query_for_evaluation()
+
+```python
+from src.rag.hybrid_rrf import query_for_evaluation
+
+# Basic usage with default model (gpt-4o)
+result = query_for_evaluation(
+    question="¿Cuáles son los síntomas del parto prematuro?"
+)
+
+# With custom model
+result = query_for_evaluation(
+    question="¿Qué es la diabetes gestacional?",
+    llm_model="gpt-4o-mini"
+)
+
+# With custom LLM instance
+from langchain_openai import ChatOpenAI
+custom_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+result = query_for_evaluation(
+    question="¿Qué cuidados necesito en el embarazo?",
+    custom_llm=custom_llm
+)
+```
+
+### Return Structure
+
+```python
+{
+    "question": str,
+    "answer": str,
+    "contexts": List[str],
+    "source_documents": List,
+    "metadata": {
+        "num_contexts": 5,
+        "retrieval_method": "hybrid_bm25_semantic_rrf_mmr",
+        "rrf_k": 60,
+        "k_bm25_candidates": 15,
+        "k_semantic_candidates": 15,
+        "k_rrf_pool": 10,
+        "k_final": 5,
+        "mmr_lambda": 0.7,
+        "llm_model": "gpt-4o",
+        "execution_time": 3.21,
+        "total_cost": 0.002678
+    }
+}
+```
+
+## When to Use This Approach
+
+### Best For
+
+- **Complex queries**: Questions that need diverse perspectives from the corpus
+- **Maximum recall**: When you want the best possible candidate pool before selection
+- **Reducing redundancy**: MMR ensures context provides complementary information
+- **Production systems**: When retrieval quality is critical and worth extra computation
+- **Benchmark optimization**: When competing for the highest possible RAG scores
+
+### Advantages Over Simple Hybrid
+
+- **Better fusion quality**: RRF is more principled than weighted averaging
+- **Larger candidate pool**: 15+15=30 candidates vs 5+5=10 in simple hybrid
+- **Diversified results**: MMR prevents redundant, similar documents
+- **Rank-based combination**: Not affected by score scale differences
+- **Configurable trade-offs**: Tune diversity vs relevance with MMR lambda
+
+### Trade-offs
+
+- **Higher latency**: ~3-5 seconds due to larger retrieval + MMR computation
+- **More embedding calls**: MMR requires re-embedding documents for diversity calculation
+- **Increased complexity**: More parameters to tune and more moving parts
+- **Higher memory**: Maintains larger candidate sets during processing
+
+<Warning>
+The MMR step requires additional embedding API calls to compute document-document similarity. This adds ~0.5-1 second of latency and a small additional cost (~$0.00002 per query).
+</Warning>
+
+## Performance Characteristics
+
+### Speed
+
+- **Retrieval**: ~1-2 seconds (parallel BM25 + semantic for 15 docs each)
+- **RRF fusion**: ~0.01 seconds (very fast)
+- **MMR diversification**: ~0.5-1 second (embedding + similarity computation)
+- **Total**: ~3-5 seconds end-to-end
+
+### Cost
+
+- **Retrieval embeddings**: ~$0.00001 (query embedding only)
+- **MMR embeddings**: ~$0.00002 (re-embedding 10 candidates for diversity)
+- **LLM cost**: ~$0.002-0.005 (same as other methods)
+- **Total**: ~$0.003-0.006 per query (slightly higher than simple approaches)
+
+### Quality
+
+- **Highest recall**: Large candidate pool captures more relevant documents
+- **Best precision**: RRF + MMR select the most relevant, diverse subset
+- **Optimal diversity**: MMR ensures complementary information in context
+- **Robust ranking**: RRF handles score scale differences gracefully
+
+## Parameter Tuning Guide
+
+### RRF Constant (k)
+
+- **Lower values (30-50)**: More aggressive fusion, top-ranked items dominate
+- **Default (60)**: Balanced, standard choice in literature
+- **Higher values (70-90)**: Gentler fusion, considers more items equally
+
+### MMR Lambda (λ)
+
+- **High lambda (0.8-0.9)**: Prioritize relevance over diversity
+- **Balanced (0.7)**: Good trade-off (default)
+- **Low lambda (0.5-0.6)**: Prioritize diversity, more varied results
+
+### Candidate Pool Sizes
+
+```python
+# Conservative (faster, lower recall)
+k_bm25_candidates = 10
+k_semantic_candidates = 10
+k_rrf_pool = 7
+k_final = 5
+
+# Default (balanced)
+k_bm25_candidates = 15
+k_semantic_candidates = 15
+k_rrf_pool = 10
+k_final = 5
+
+# Aggressive (slower, maximum recall)
+k_bm25_candidates = 20
+k_semantic_candidates = 20
+k_rrf_pool = 15
+k_final = 5
+```
+
+## Comparison with Other Architectures
+
+| Feature | Simple Semantic | Hybrid | Hybrid RRF (This) |
+|---------|----------------|--------|-------------------|
+| **Retrieval methods** | Semantic only | BM25 + Semantic | BM25 + Semantic |
+| **Fusion method** | None | Weighted avg | RRF |
+| **Diversification** | None | None | MMR |
+| **Candidate pool** | 5 docs | 5+5 docs | 15+15 docs |
+| **Final docs** | 5 | ~5-10 | 5 |
+| **Latency** | ~2s | ~3s | ~4s |
+| **Cost** | Lowest | Low | Moderate |
+| **Quality** | Good | Better | Best |
+
+## Source Files
+
+- Implementation: `~/workspace/source/src/rag/hybrid_rrf.py:186-195`
+- RRF algorithm: `~/workspace/source/src/rag/hybrid_rrf.py:114-127`
+- MMR selection: `~/workspace/source/src/rag/hybrid_rrf.py:140-183`
+- Evaluation interface: `~/workspace/source/src/rag/hybrid_rrf.py:242-299`

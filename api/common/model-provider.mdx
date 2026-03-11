@@ -1,0 +1,261 @@
+---
+title: "Model Provider"
+description: "Model provider abstraction for LLMs and SLMs with unified interface for OpenAI and HuggingFace models"
+---
+
+## Overview
+
+The `model_provider` module provides a unified abstraction layer for working with both OpenAI models (GPT-5, GPT-4.1) and HuggingFace models (MediPhi, MedGemma) deployed via TGI or HuggingFace Inference Endpoints with OpenAI-compatible APIs.
+
+## ModelConfig
+
+Configuration dataclass for language models.
+
+### Fields
+
+<ParamField path="name" type="str" required>
+  Short name/key for the model (e.g., 'gpt-4.1', 'mediphi')
+</ParamField>
+
+<ParamField path="model_id" type="str" required>
+  Full model identifier (e.g., 'gpt-4.1', 'microsoft/MediPhi')
+</ParamField>
+
+<ParamField path="provider" type="Literal['openai', 'huggingface']" required>
+  Model provider type
+</ParamField>
+
+<ParamField path="endpoint_url_env" type="Optional[str]">
+  Environment variable name for HuggingFace endpoint URL (e.g., 'MEDIPHI_ENDPOINT_URL'). Only used for HuggingFace models. Should point to base endpoint URL without /v1.
+</ParamField>
+
+<ParamField path="temperature" type="float" default="0.0">
+  Sampling temperature for the model
+</ParamField>
+
+### Example
+
+```python
+from src.common.model_provider import ModelConfig
+
+# OpenAI model configuration
+openai_config = ModelConfig(
+    name="gpt-5",
+    model_id="gpt-5",
+    provider="openai",
+    temperature=0.0
+)
+
+# HuggingFace model configuration
+hf_config = ModelConfig(
+    name="mediphi",
+    model_id="microsoft/MediPhi-Instruct",
+    provider="huggingface",
+    endpoint_url_env="MEDIPHI_ENDPOINT_URL",
+    temperature=0.0
+)
+```
+
+## create_llm()
+
+Factory function to create a language model based on configuration.
+
+### Signature
+
+```python
+def create_llm(config: ModelConfig) -> BaseChatModel
+```
+
+### Parameters
+
+<ParamField path="config" type="ModelConfig" required>
+  ModelConfig instance specifying the model to create
+</ParamField>
+
+### Returns
+
+<ResponseField name="BaseChatModel" type="BaseChatModel">
+  Configured language model instance. OpenAI models return standard ChatOpenAI instances. HuggingFace models return ChatOpenAI instances pointing to a TGI/HF Inference Endpoint that exposes the OpenAI-compatible API.
+</ResponseField>
+
+### Raises
+
+- `ValueError`: If endpoint URL environment variable is not set for HuggingFace models
+- `ValueError`: If HF_TOKEN environment variable is not set for HuggingFace models
+- `ValueError`: If provider is unknown
+
+### Behavior
+
+**OpenAI Models:**
+- Returns standard `ChatOpenAI` instance
+- Uses `model_id` and `temperature` from config
+- Requires `OPENAI_API_KEY` environment variable
+
+**HuggingFace Models:**
+- Returns `ChatOpenAI` instance configured for TGI/HF Inference Endpoint
+- Normalizes endpoint URL to OpenAI-compatible format (ending in /v1)
+- Requires environment variable specified in `endpoint_url_env`
+- Requires `HF_TOKEN` environment variable for authentication
+- Sets `max_tokens=512` to prevent infinite loops in TGI models
+
+### Example
+
+```python
+from src.common.model_provider import create_llm, MODELS_REGISTRY
+
+# Create OpenAI model
+gpt5_config = MODELS_REGISTRY["gpt-5"]
+gpt5_llm = create_llm(gpt5_config)
+
+# Create HuggingFace model
+mediphi_config = MODELS_REGISTRY["microsoft/MediPhi-Instruct"]
+mediphi_llm = create_llm(mediphi_config)
+
+# Use the model
+response = gpt5_llm.invoke("Explain the pathophysiology of preeclampsia.")
+```
+
+## get_model_identity()
+
+Resolve provider and model identity from registry hints and runtime LLM instance. Keeps metadata and pricing lookups consistent across OpenAI and OpenAI-compatible providers.
+
+### Signature
+
+```python
+def get_model_identity(
+    model_name: Optional[str] = None,
+    llm: Optional[BaseChatModel] = None
+) -> Dict[str, str]
+```
+
+### Parameters
+
+<ParamField path="model_name" type="Optional[str]">
+  Requested model name to look up in registry
+</ParamField>
+
+<ParamField path="llm" type="Optional[BaseChatModel]">
+  Runtime LLM instance to extract model information from
+</ParamField>
+
+### Returns
+
+<ResponseField name="identity" type="Dict[str, str]">
+  Dictionary containing:
+  - `provider`: Provider type ("openai", "huggingface", or "unknown")
+  - `model_id`: Full model identifier
+  - `model_name`: Short model name/key
+</ResponseField>
+
+### Resolution Logic
+
+1. First checks if `model_name` matches a key in `MODELS_REGISTRY`
+2. Then checks if runtime model name from `llm.model_name` matches registry
+3. Then searches registry for matching `model_id`
+4. Falls back to inference:
+   - If model ID contains "/", infers "huggingface"
+   - Otherwise infers "openai"
+   - Uses "unknown" if no information available
+
+### Example
+
+```python
+from src.common.model_provider import get_model_identity, create_llm, MODELS_REGISTRY
+
+# Get identity from model name
+identity = get_model_identity(model_name="gpt-5")
+# {"provider": "openai", "model_id": "gpt-5", "model_name": "gpt-5"}
+
+# Get identity from LLM instance
+llm = create_llm(MODELS_REGISTRY["microsoft/MediPhi-Instruct"])
+identity = get_model_identity(llm=llm)
+# {"provider": "huggingface", "model_id": "microsoft/MediPhi-Instruct", "model_name": "mediphi"}
+```
+
+## MODELS_REGISTRY
+
+Canonical registry of all available models with their configurations.
+
+### Type
+
+```python
+MODELS_REGISTRY: Dict[str, ModelConfig]
+```
+
+### Registered Models
+
+**OpenAI Models:**
+- `gpt-5`: GPT-5 model with temperature 0.0
+- `gpt-5.2`: GPT-5.2 model with temperature 0.0
+
+**HuggingFace Models:**
+- `microsoft/MediPhi-Instruct`: Medical-specialized Phi model
+  - Short name: `mediphi`
+  - Endpoint: `MEDIPHI_ENDPOINT_URL` environment variable
+- `google/medgemma-1.5-4b-it`: Medical Gemma 1.5B instruction-tuned model
+  - Short name: `medgemma`
+  - Endpoint: `MEDGEMMA_ENDPOINT_URL` environment variable
+
+### Example
+
+```python
+from src.common.model_provider import MODELS_REGISTRY, create_llm
+
+# List all available models
+for model_key in MODELS_REGISTRY:
+    print(f"Available: {model_key}")
+
+# Create model from registry
+config = MODELS_REGISTRY["gpt-5"]
+llm = create_llm(config)
+
+# Access configuration details
+mediphi_config = MODELS_REGISTRY["microsoft/MediPhi-Instruct"]
+print(f"Provider: {mediphi_config.provider}")  # "huggingface"
+print(f"Short name: {mediphi_config.name}")    # "mediphi"
+print(f"Endpoint env: {mediphi_config.endpoint_url_env}")  # "MEDIPHI_ENDPOINT_URL"
+```
+
+## Environment Variables
+
+### Required for All Models
+
+- `OPENAI_API_KEY`: API key for OpenAI models (loaded from .env if not set)
+
+### Required for HuggingFace Models
+
+- `HF_TOKEN`: HuggingFace authentication token
+- Model-specific endpoint URLs:
+  - `MEDIPHI_ENDPOINT_URL`: Endpoint URL for MediPhi model
+  - `MEDGEMMA_ENDPOINT_URL`: Endpoint URL for MedGemma model
+
+### Optional
+
+- `PRICING_CONFIG_PATH`: Path to custom pricing configuration JSON
+
+## Utility Functions
+
+### load_dotenv_if_needed()
+
+Automatically loads environment variables from `.env` file if `OPENAI_API_KEY` is not already set.
+
+```python
+def load_dotenv_if_needed() -> None
+```
+
+Called automatically by `create_llm()`. Looks for `.env` file in project root (two levels up from the module).
+
+## URL Normalization
+
+The module includes internal URL normalization to ensure HuggingFace endpoint URLs are properly formatted:
+
+```python
+# All of these are normalized to: https://host/v1
+https://host
+https://host/
+https://host/v1
+https://host/v1/
+https://host/v1/chat/completions
+```
+
+This ensures consistent OpenAI-compatible API access regardless of how the endpoint URL is specified.

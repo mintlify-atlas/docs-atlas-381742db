@@ -1,0 +1,352 @@
+---
+title: "HyDE (Hypothetical Document Embeddings)"
+description: "Advanced RAG strategy that generates hypothetical answers and retrieves documents similar to them"
+---
+
+## Overview
+
+HyDE (Hypothetical Document Embeddings) is a novel RAG architecture that inverts the traditional retrieval process:
+
+1. Instead of embedding the **query**, generate a **hypothetical ideal answer** to the query
+2. Embed the hypothetical answer (which is longer and more detailed than the query)
+3. Retrieve documents similar to the hypothetical answer
+4. Generate the final answer based on the retrieved real documents
+
+This approach can significantly improve retrieval quality by searching with a richer, more document-like representation.
+
+## How It Works
+
+### Pipeline Steps
+
+1. **Query Analysis**: Receive user's question
+2. **Hypothetical Document Generation**: Use an LLM (gpt-3.5-turbo with temperature=0.7) to generate a detailed, hypothetical medical document that would answer the question
+3. **Semantic Retrieval**: Embed the hypothetical document and retrieve real documents similar to it
+4. **Answer Generation**: Use a more powerful LLM (gpt-4o) to generate the final answer from real retrieved documents
+
+<Note>
+HyDE uses two LLM calls: one creative call (temperature=0.7) to generate the hypothetical document, and one precise call (temperature=0) to generate the final answer.
+</Note>
+
+### Why This Works
+
+- **Vocabulary matching**: Hypothetical documents naturally use similar vocabulary to real documents
+- **Richer query representation**: Full paragraph vs. short question provides more semantic signal
+- **Query expansion**: Hypothetical document includes related concepts and terms
+- **Dense information**: More tokens to embed means more semantic information
+
+## Key Features
+
+- **Two-stage LLM usage**: Separate models for generation and answering
+- **Creative hypothesis generation**: Higher temperature (0.7) for diverse, detailed hypothetical documents
+- **Semantic-only retrieval**: Uses only the hypothetical document for retrieval, not original query
+- **Detailed metrics**: Tracks costs and tokens for both LLM calls separately
+
+## Implementation Details
+
+### Model Configuration
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+# Creative model for hypothetical document generation
+llm_hyde = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+
+# Precise model for final answer generation
+llm_answer = ChatOpenAI(model_name="gpt-4o", temperature=0)
+
+# Embeddings for retrieval
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+```
+
+### Hypothetical Document Generation Prompt
+
+```python
+hyde_prompt_template = """
+You are a medical expert writing a detailed section for a medical guide on pregnancy and childbirth.
+
+Based on this question: {question}
+
+Write a detailed and comprehensive medical document that would perfectly answer this question.
+The document should include:
+- Accurate medical information on the topic
+- Relevant clinical details
+- Appropriate medical recommendations
+- Important considerations for maternal health
+- Practical information and advice
+
+Write the document as if it were part of an official medical guide on pregnancy and childbirth.
+Be specific, detailed, and use appropriate medical terminology.
+
+HYPOTHETICAL DOCUMENT:
+"""
+```
+
+### Core Processing Function
+
+```python
+def process_hyde_query(
+    query: str, 
+    custom_hyde_llm: ChatOpenAI = None, 
+    custom_answer_llm: ChatOpenAI = None
+) -> Dict[str, Any]:
+    """
+    Processes a query using the full HyDE RAG pipeline.
+    
+    Args:
+        query (str): The user's question.
+        custom_hyde_llm (ChatOpenAI, optional): Custom model for hypothetical document generation.
+        custom_answer_llm (ChatOpenAI, optional): Custom model for answer generation.
+    
+    Returns:
+        Dict[str, Any]: Answer, contexts, hypothetical document, and detailed metrics.
+    """
+    # 1. Generate hypothetical document
+    hypothetical_doc, hyde_result = _invoke_text_with_usage(
+        current_hyde_llm,
+        hyde_prompt.format_messages(question=query)
+    )
+    
+    # 2. Retrieve similar documents using hypothetical doc
+    retrieved_docs = retriever.invoke(hypothetical_doc)
+    
+    # 3. Format context
+    formatted_context = format_docs(retrieved_docs)
+    
+    # 4. Generate final answer from real documents
+    answer_text, answer_metrics = _invoke_text_with_usage(
+        current_answer_llm,
+        qa_prompt.format_messages(
+            context=formatted_context,
+            question=query
+        )
+    )
+    
+    # 5. Return comprehensive results
+    return {
+        'answer': answer_text,
+        'contexts': [doc.page_content for doc in retrieved_docs],
+        'hypothetical_document': hypothetical_doc,
+        'hyde_metrics': hyde_result,
+        'answer_metrics': answer_metrics,
+        'total_cost': hyde_result['cost'] + answer_metrics['cost'],
+        'total_input_tokens': hyde_result['input_tokens'] + answer_metrics['input_tokens'],
+        'total_output_tokens': hyde_result['output_tokens'] + answer_metrics['output_tokens']
+    }
+```
+
+### Example Hypothetical Document
+
+For the query "¿Qué es la preeclampsia?", HyDE might generate:
+
+```
+La preeclampsia es una complicación grave del embarazo caracterizada por 
+hipertensión arterial y daño a órganos, típicamente después de la semana 20 
+de gestación. Se manifiesta con presión arterial superior a 140/90 mmHg y 
+proteinuria. Los síntomas incluyen dolores de cabeza severos, cambios en la 
+visión, dolor abdominal superior y edema significativo. Los factores de 
+riesgo incluyen primer embarazo, embarazo múltiple, hipertensión crónica, 
+diabetes, obesidad, y antecedentes familiares. El tratamiento requiere 
+monitoreo cercano de la presión arterial, pruebas de función renal y 
+hepática, y evaluación fetal frecuente. En casos graves, el único 
+tratamiento definitivo es el parto, que puede necesitar inducirse 
+prematuramente. Las complicaciones potenciales incluyen eclampsia, 
+síndrome HELLP, desprendimiento de placenta, y restricción del crecimiento 
+fetal...
+```
+
+This rich document is then embedded and used for retrieval.
+
+## Usage with query_for_evaluation()
+
+```python
+from src.rag.hyde import query_for_evaluation
+
+# Basic usage with default models
+result = query_for_evaluation(
+    question="¿Cuáles son los síntomas del parto prematuro?"
+)
+
+# With custom models for each stage
+result = query_for_evaluation(
+    question="¿Qué es la diabetes gestacional?",
+    hyde_model="gpt-3.5-turbo",    # Hypothetical doc generation
+    answer_model="gpt-4o-mini"      # Final answer generation
+)
+
+# With custom LLM instances
+from langchain_openai import ChatOpenAI
+hyde_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.8)
+answer_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+
+result = query_for_evaluation(
+    question="¿Qué cuidados necesito en el embarazo?",
+    custom_hyde_llm=hyde_llm,
+    custom_answer_llm=answer_llm
+)
+```
+
+### Return Structure
+
+```python
+{
+    "question": str,
+    "answer": str,
+    "contexts": List[str],
+    "metadata": {
+        "execution_time": 4.52,
+        "input_tokens": 2341,      # Total for both LLM calls
+        "output_tokens": 456,       # Total for both LLM calls
+        "total_cost": 0.003892,
+        "retrieval_method": "hyde",
+        "llm_hyde_model": "gpt-3.5-turbo",
+        "llm_answer_model": "gpt-4o",
+        "hyde_provider": "openai",
+        "answer_provider": "openai",
+        "hyde_cost": 0.000234,      # Cost breakdown
+        "answer_cost": 0.003658,
+        "usage_source": "provider+provider"
+    }
+}
+```
+
+## When to Use This Approach
+
+### Best For
+
+- **Vocabulary gap queries**: When users ask questions with different terminology than documents
+- **Short, ambiguous queries**: HyDE expands sparse queries into rich documents
+- **Conceptual questions**: When semantic meaning is more important than exact keywords
+- **Cross-lingual scenarios**: Hypothetical documents can bridge language/dialect differences
+- **Exploratory retrieval**: When you want to find documents conceptually related to the answer
+
+### Advantages Over Other Methods
+
+- **Bridges vocabulary gap**: Hypothetical document uses corpus vocabulary automatically
+- **Query expansion**: Single query becomes rich, multi-faceted document
+- **Semantic richness**: More tokens = more semantic information for retrieval
+- **Handles ambiguity**: LLM interprets vague queries into concrete documents
+
+### Limitations
+
+- **Higher cost**: Two LLM calls instead of one (~50-100% more expensive)
+- **Higher latency**: Additional LLM call adds ~1-2 seconds
+- **Hallucination risk**: Hypothetical document may include incorrect information
+- **Retrieval bias**: Retrieves documents similar to what LLM thinks answer should be
+- **No keyword precision**: Pure semantic search may miss exact term matches
+
+<Warning>
+HyDE's hypothetical document is generated by an LLM and may contain hallucinations or inaccuracies. These don't appear in the final answer (which is grounded in real documents), but they can bias retrieval toward certain types of documents.
+</Warning>
+
+## Performance Characteristics
+
+### Speed
+
+- **HyDE generation**: ~1-2 seconds (gpt-3.5-turbo)
+- **Retrieval**: ~0.5-1 second (semantic search)
+- **Answer generation**: ~1-2 seconds (gpt-4o)
+- **Total**: ~4-6 seconds (slower than other methods)
+
+### Cost
+
+- **HyDE LLM call**: ~$0.0002-0.0004 (gpt-3.5-turbo, ~200-300 output tokens)
+- **Embedding**: ~$0.00001 (hypothetical document embedding)
+- **Answer LLM call**: ~$0.002-0.005 (gpt-4o)
+- **Total**: ~$0.003-0.006 per query (50-100% more expensive than simple semantic)
+
+### Quality
+
+- **Best for vocabulary gaps**: Outperforms other methods when query/document vocabulary differs
+- **Good for short queries**: Expansion improves retrieval for sparse queries
+- **Variable performance**: Quality depends on hypothetical document quality
+- **Can improve or hurt recall**: May retrieve conceptually related but not directly relevant docs
+
+## Prompt Engineering for HyDE
+
+The quality of hypothetical documents directly impacts retrieval. Key prompt elements:
+
+### Good HyDE Prompts
+
+- **Specify document type**: "Write a medical guide section" vs. "Answer this question"
+- **Request detail**: "Detailed and comprehensive" encourages rich generation
+- **Include structure hints**: List specific elements to include
+- **Use domain language**: "Clinical details", "medical recommendations"
+- **Set tone**: "Official medical guide" vs. "patient education material"
+
+### Example Variations
+
+<CodeGroup>
+
+```python Standard (Used in Implementation)
+hyde_prompt = """
+You are a medical expert writing a detailed section for a medical guide.
+Write a detailed and comprehensive medical document that would perfectly 
+answer this question: {question}
+
+Include medical information, clinical details, recommendations, and 
+practical advice. Use appropriate medical terminology.
+"""
+```
+
+```python More Creative
+hyde_prompt = """
+Imagine you're writing the authoritative textbook chapter that would answer: 
+{question}
+
+Write 2-3 paragraphs covering mechanisms, diagnosis, treatment, and 
+prognosis. Use medical terminology and cite typical clinical presentations.
+"""
+```
+
+```python Patient-Focused
+hyde_prompt = """
+Write a patient education handout that thoroughly answers: {question}
+
+Explain medical concepts clearly, include what to expect, when to seek help,
+and practical advice for daily life.
+"""
+```
+
+</CodeGroup>
+
+## Comparison with Other Architectures
+
+| Aspect | Simple Semantic | HyDE (This) | Query Rewriter |
+|--------|----------------|-------------|----------------|
+| **Query representation** | Original query | Hypothetical answer | Multiple query variants |
+| **LLM calls** | 1 (answer only) | 2 (hypothesis + answer) | 4+ (rewrites + answer) |
+| **Retrieval** | Single pass | Single pass | Multiple passes |
+| **Best for** | Clear queries | Vocabulary gaps | Ambiguous queries |
+| **Cost** | Low | Medium | High |
+| **Latency** | ~2s | ~5s | ~6s |
+
+## Advanced: Multi-Hypothesis HyDE
+
+You can extend HyDE by generating multiple hypothetical documents:
+
+```python
+def multi_hyde_retrieval(query: str, num_hypotheses: int = 3) -> List[Document]:
+    """Generate multiple hypothetical documents and retrieve from each."""
+    all_docs = []
+    
+    for i in range(num_hypotheses):
+        # Generate hypothesis (temperature > 0 gives variety)
+        hyde_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+        hypothetical_doc = hyde_llm.invoke(
+            hyde_prompt.format_messages(question=query)
+        ).content
+        
+        # Retrieve based on this hypothesis
+        docs = retriever.invoke(hypothetical_doc)
+        all_docs.extend(docs)
+    
+    # Deduplicate and re-rank
+    return deduplicate_and_rerank(all_docs)
+```
+
+## Source Files
+
+- Implementation: `~/workspace/source/src/rag/hyde.py:172-225`
+- Hypothetical doc generation: `~/workspace/source/src/rag/hyde.py:106-130`
+- HyDE prompt: `~/workspace/source/src/rag/hyde.py:63-80`
+- Evaluation interface: `~/workspace/source/src/rag/hyde.py:228-302`

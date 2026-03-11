@@ -1,0 +1,420 @@
+---
+title: "Multi-Query Rewriter RAG"
+description: "Advanced RAG architecture that generates multiple query variations to improve retrieval coverage and diversity"
+---
+
+## Overview
+
+Multi-Query Rewriter RAG is an advanced retrieval strategy that:
+1. Generates multiple rewritten versions of the original query
+2. Retrieves documents for each query variation
+3. Combines and re-ranks results with weighted scoring
+4. Returns diverse, high-quality documents from the merged pool
+
+This approach improves retrieval recall by exploring different phrasings, perspectives, and aspects of the original question.
+
+## How It Works
+
+### Pipeline Steps
+
+1. **Query Analysis**: Receive user's original question
+2. **Multi-Query Generation**: Generate 3 query variations using different rewriting strategies:
+   - **Standalone rewrite**: Make the query self-contained and specific
+   - **Synonym expansion**: Rephrase using alternative medical terminology
+   - **Context expansion**: Expand to include related aspects and complications
+3. **Multi-Retrieval**: Retrieve top-5 documents for each of the 3 rewritten queries (15 candidates total)
+4. **Weighted Re-ranking**: Combine results with query-position weighting to reduce redundancy
+5. **Deduplication**: Remove duplicate documents using content-based identification
+6. **Final Selection**: Select top 8 diverse documents for answer generation
+7. **Answer Generation**: Generate final answer from merged, diverse context
+
+<Note>
+Query position weighting penalizes later queries (more speculative rewrites) to balance precision and recall: Query 1 weight = 1.0, Query 2 = 0.95, Query 3 = 0.90.
+</Note>
+
+## Key Features
+
+- **Three rewriting strategies**: Covers different aspects of query reformulation
+- **Multi-perspective retrieval**: Each query variant surfaces different documents
+- **Weighted fusion**: Earlier (more faithful) queries have higher influence
+- **Automatic deduplication**: Prevents redundant documents in final context
+- **Larger context window**: Returns 8 documents vs. 5 in simpler methods
+- **Detailed query tracking**: Returns all rewritten queries for analysis
+
+## Implementation Details
+
+### Query Rewriting Templates
+
+```python
+# Template 1: Standalone, specific rewrite
+REPHRASE_TEMPLATE_1 = """
+Rewrite this question to be a standalone, specific query about pregnancy and childbirth.
+
+Original question: {question}
+
+Instructions:
+- Maintain the medical/obstetric context if relevant.
+- Be specific and clear in medical terms.
+- Focus on pregnancy, childbirth, prenatal care, or maternal health.
+- Ensure the question is complete and self-contained.
+
+Standalone question:
+"""
+
+# Template 2: Synonym expansion
+REPHRASE_TEMPLATE_2 = """
+Rephrase this question about pregnancy and childbirth using synonyms and 
+alternative medical terms.
+
+Original question: {question}
+
+Instructions:
+- Use precise medical terminology.
+- Include synonyms and alternative terms.
+- Maintain the meaning but change the wording.
+- Focus on clinical and obstetric aspects.
+
+Rephrased question:
+"""
+
+# Template 3: Context expansion
+REPHRASE_TEMPLATE_3 = """
+Expand this question to include related aspects and additional context about 
+pregnancy and childbirth.
+
+Base question: {question}
+
+Instructions:
+- Expand the question to include related aspects.
+- Add context about complications, prevention, or care.
+- Include possible variations or special cases.
+- Keep the focus on maternal and perinatal health.
+
+Expanded question:
+"""
+```
+
+### Core Processing Function
+
+```python
+def process_rewriter_query(
+    question: str, 
+    custom_rewriter_llm: ChatOpenAI = None, 
+    custom_answer_llm: ChatOpenAI = None, 
+    max_final_docs: int = 8
+) -> Dict[str, Any]:
+    """
+    Processes a query using the multi-query rewriting RAG pipeline.
+    
+    Args:
+        question (str): The user's question.
+        custom_rewriter_llm (ChatOpenAI, optional): Custom model for query rewriting.
+        custom_answer_llm (ChatOpenAI, optional): Custom model for answer generation.
+        max_final_docs (int): The maximum number of documents to return.
+    
+    Returns:
+        Dict[str, Any]: Answer, contexts, rewritten queries, and detailed metrics.
+    """
+    # 1. Generate rewritten queries and track metrics
+    rewritten_queries = []
+    rewrite_input_tokens, rewrite_output_tokens, rewrite_cost = 0, 0, 0
+    
+    for prompt in REPHRASE_PROMPTS:
+        rewritten_query, rewrite_metrics = _invoke_text_with_usage(
+            current_rewriter_llm,
+            prompt.format(question=question)
+        )
+        rewritten_queries.append(rewritten_query)
+        rewrite_input_tokens += rewrite_metrics["input_tokens"]
+        rewrite_output_tokens += rewrite_metrics["output_tokens"]
+        rewrite_cost += rewrite_metrics["cost"]
+    
+    # 2. Retrieve documents for each rewritten query
+    all_docs_with_scores = []
+    doc_ids_seen = set()
+    
+    for i, query in enumerate(rewritten_queries, 1):
+        results = vectorstore.similarity_search_with_score(query, k=5)
+        for doc, distance in results:
+            similarity = max(0.0, 1.0 - distance)
+            doc_id = doc.page_content[:100]  # Use content prefix as ID
+            
+            if doc_id not in doc_ids_seen:
+                doc_ids_seen.add(doc_id)
+                # Penalize queries from later, more speculative prompts
+                query_weight = 1.0 - (i - 1) * 0.05
+                all_docs_with_scores.append((doc, similarity * query_weight))
+    
+    # 3. Re-rank and select the best documents
+    all_docs_with_scores.sort(key=lambda x: x[1], reverse=True)
+    retrieved_docs = [doc for doc, _ in all_docs_with_scores[:max_final_docs]]
+    
+    # 4. Format context and generate final answer
+    formatted_context = format_docs(retrieved_docs)
+    answer, answer_metrics = _invoke_text_with_usage(
+        current_answer_llm,
+        qa_prompt.format_messages(context=formatted_context, question=question)
+    )
+    
+    # 5. Consolidate and return all information
+    return {
+        'answer': answer,
+        'contexts': [doc.page_content for doc in retrieved_docs],
+        'retrieved_documents': retrieved_docs,
+        'rewritten_queries': rewritten_queries,
+        'metrics': {...}
+    }
+```
+
+### Example Query Rewrites
+
+For the original query: **"¿Qué debo hacer si tengo contracciones?"**
+
+The system might generate:
+
+<CodeGroup>
+
+```text Query 1: Standalone
+¿Cuáles son los pasos a seguir cuando una mujer embarazada experimenta 
+contracciones uterinas durante el tercer trimestre del embarazo?
+```
+
+```text Query 2: Synonyms
+¿Cómo debo actuar ante la presencia de contracciones del útero, dolores 
+de parto, o trabajo de parto prematuro?
+```
+
+```text Query 3: Expanded
+¿Qué acciones debo tomar si experimento contracciones uterinas, incluyendo 
+cuándo ir al hospital, cómo distinguir entre contracciones de Braxton Hicks 
+y contracciones de parto verdadero, y qué signos de alarma debo vigilar que 
+indiquen complicaciones como parto prematuro?
+```
+
+</CodeGroup>
+
+Each variant retrieves different documents, improving overall coverage.
+
+## Usage with query_for_evaluation()
+
+```python
+from src.rag.rewriter import query_for_evaluation
+
+# Basic usage with default models
+result = query_for_evaluation(
+    question="¿Cuáles son los síntomas del parto prematuro?"
+)
+
+# With custom models for each stage
+result = query_for_evaluation(
+    question="¿Qué es la diabetes gestacional?",
+    rewriter_model="gpt-3.5-turbo",  # Query rewriting
+    answer_model="gpt-4o"             # Final answer generation
+)
+
+# With custom LLM instances
+from langchain_openai import ChatOpenAI
+rewriter_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.3)
+answer_llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+
+result = query_for_evaluation(
+    question="¿Qué cuidados necesito en el embarazo?",
+    custom_rewriter_llm=rewriter_llm,
+    custom_answer_llm=answer_llm
+)
+```
+
+### Return Structure
+
+```python
+{
+    "question": str,
+    "answer": str,
+    "contexts": List[str],           # Up to 8 contexts
+    "source_documents": List,
+    "metadata": {
+        "num_contexts": 8,
+        "retrieval_method": "multi_query_rewrite",
+        "rewrite_count": 3,
+        "llm_model": "gpt-4o",
+        "rewriter_model": "gpt-3.5-turbo",
+        "provider": "openai",
+        "execution_time": 5.82,
+        "input_tokens": 3124,          # Total across all LLM calls
+        "output_tokens": 487,
+        "total_cost": 0.004523,
+        "usage_source": "provider"
+    }
+}
+```
+
+## When to Use This Approach
+
+### Best For
+
+- **Ambiguous queries**: Questions that could be interpreted multiple ways
+- **Incomplete information**: Vague or underspecified questions
+- **Maximum recall**: When you need to find all relevant documents
+- **Exploratory search**: When users might not know exact terminology
+- **Complex topics**: Multi-faceted questions that span different aspects
+- **Synonym-rich domains**: Medical/technical fields with multiple terms for same concepts
+
+### Advantages Over Other Methods
+
+- **Highest recall**: Multiple queries cast a wider net for relevant documents
+- **Handles ambiguity**: Different rewrites explore different interpretations
+- **Vocabulary robustness**: Synonym expansion catches different terminologies
+- **Comprehensive coverage**: Expansion strategy includes related aspects
+- **Explicit query diversity**: Each rewrite targets different retrieval angles
+
+### Trade-offs
+
+- **Highest cost**: 3 rewrite LLM calls + 1 answer call (~$0.005-0.008 per query)
+- **Highest latency**: Multiple LLM calls + multiple retrievals (~5-7 seconds)
+- **Potential noise**: More retrievals may include less relevant documents
+- **Complex metrics tracking**: Must track costs across multiple LLM invocations
+- **May over-expand**: Expansion can drift from original intent
+
+<Warning>
+Multi-query rewriting is the most expensive architecture in terms of both cost and latency. Use it when retrieval quality is critical and you need maximum recall, but consider simpler methods for cost-sensitive or latency-sensitive applications.
+</Warning>
+
+## Performance Characteristics
+
+### Speed
+
+- **Query rewriting**: ~2-3 seconds (3 × gpt-3.5-turbo calls)
+- **Multi-retrieval**: ~1-2 seconds (3 × semantic search)
+- **Answer generation**: ~1-2 seconds (1 × gpt-4o call)
+- **Total**: ~5-8 seconds end-to-end
+
+### Cost
+
+- **Query rewrites**: ~$0.0003-0.0006 (3 × gpt-3.5-turbo, ~50 tokens each)
+- **Embeddings**: ~$0.00003 (3 × query embeddings)
+- **Answer generation**: ~$0.003-0.006 (gpt-4o with larger context)
+- **Total**: ~$0.004-0.008 per query (highest among all architectures)
+
+### Quality
+
+- **Excellent recall**: Best at finding all relevant documents
+- **Good for ambiguity**: Multiple interpretations increase coverage
+- **Variable precision**: More documents may include some less relevant ones
+- **Context richness**: 8 documents provide comprehensive information
+- **Query-dependent**: Quality depends on rewrite quality
+
+## Configuration and Tuning
+
+### Rewriter Model Temperature
+
+```python
+# Conservative (more faithful rewrites)
+llm_rewriter = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.1)
+
+# Balanced (default)
+llm_rewriter = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.3)
+
+# Creative (more diverse rewrites)
+llm_rewriter = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.5)
+```
+
+### Number of Final Documents
+
+```python
+# Concise context (faster, cheaper LLM calls)
+result = process_rewriter_query(question, max_final_docs=5)
+
+# Balanced (default)
+result = process_rewriter_query(question, max_final_docs=8)
+
+# Comprehensive context (maximum information)
+result = process_rewriter_query(question, max_final_docs=12)
+```
+
+### Query Weighting Strategy
+
+The current implementation uses linear decay:
+
+```python
+# Current: Linear decay
+query_weight = 1.0 - (i - 1) * 0.05  # 1.0, 0.95, 0.90
+
+# Alternative: Exponential decay (more aggressive)
+query_weight = 0.9 ** (i - 1)  # 1.0, 0.9, 0.81
+
+# Alternative: Equal weighting (trust all rewrites equally)
+query_weight = 1.0  # 1.0, 1.0, 1.0
+```
+
+## Comparison with Other Architectures
+
+| Feature | Simple Semantic | HyDE | Multi-Query (This) |
+|---------|----------------|------|--------------------|
+| **Query processing** | Direct | Generate hypothesis | Generate 3 variants |
+| **LLM calls** | 1 | 2 | 4 |
+| **Retrieval passes** | 1 | 1 | 3 |
+| **Final docs** | 5 | 5 | 8 |
+| **Best for** | Clear queries | Vocabulary gaps | Ambiguous queries |
+| **Recall** | Good | Good | Excellent |
+| **Precision** | Good | Variable | Variable |
+| **Cost** | Lowest | Medium | Highest |
+| **Latency** | ~2s | ~5s | ~6s |
+
+## Advanced: Custom Rewriting Strategies
+
+You can define custom rewriting prompts for your domain:
+
+```python
+# Add a fourth rewrite strategy focused on complications
+COMPLICATIONS_TEMPLATE = """
+Rewrite this pregnancy/childbirth question to focus on potential 
+complications, risk factors, and warning signs.
+
+Original question: {question}
+
+Complication-focused question:
+"""
+
+REPHRASE_PROMPTS = [
+    PromptTemplate.from_template(REPHRASE_TEMPLATE_1),
+    PromptTemplate.from_template(REPHRASE_TEMPLATE_2),
+    PromptTemplate.from_template(REPHRASE_TEMPLATE_3),
+    PromptTemplate.from_template(COMPLICATIONS_TEMPLATE)  # Add custom
+]
+```
+
+## Error Handling and Robustness
+
+<Note>
+The system gracefully handles edge cases:
+- If two rewrites are identical, deduplication removes the duplicate
+- If a rewrite fails, the system can continue with successful rewrites
+- If no documents match a rewrite, it's skipped without affecting other queries
+</Note>
+
+## Metrics and Observability
+
+The implementation provides detailed cost breakdowns:
+
+```python
+result['metrics'] = {
+    'rewrite_input_tokens': 234,
+    'rewrite_output_tokens': 156,
+    'rewrite_cost': 0.000456,
+    'answer_input_tokens': 2890,
+    'answer_output_tokens': 331,
+    'answer_cost': 0.004067,
+    'total_input_tokens': 3124,
+    'total_output_tokens': 487,
+    'total_cost': 0.004523
+}
+```
+
+This allows you to track exactly where costs are incurred.
+
+## Source Files
+
+- Implementation: `~/workspace/source/src/rag/rewriter.py:163-244`
+- Rewriting prompts: `~/workspace/source/src/rag/rewriter.py:64-104`
+- Retrieval and fusion: `~/workspace/source/src/rag/rewriter.py:184-212`
+- Evaluation interface: `~/workspace/source/src/rag/rewriter.py:247-323`

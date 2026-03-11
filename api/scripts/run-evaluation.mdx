@@ -1,0 +1,324 @@
+---
+title: run_evaluation.py
+description: CLI tool for running RAGAS evaluations on RAG systems with multiple models and configurations
+---
+
+## Overview
+
+The `run_evaluation.py` script is the official CLI entrypoint for running RAGAS (Retrieval Augmented Generation Assessment) evaluations on RAG systems. It supports evaluating single RAG systems, comparing multiple RAG architectures, testing different LLM models, and generating comprehensive evaluation reports.
+
+## Location
+
+```
+scripts/run_evaluation.py
+```
+
+## Usage
+
+### Basic Command Structure
+
+```bash
+python scripts/run_evaluation.py [command] [options]
+```
+
+### Available Commands
+
+#### Single RAG Evaluation
+
+Evaluate a specific RAG system:
+
+```bash
+python scripts/run_evaluation.py simple
+python scripts/run_evaluation.py hybrid
+python scripts/run_evaluation.py hybrid-rrf
+python scripts/run_evaluation.py hyde
+python scripts/run_evaluation.py rewriter
+python scripts/run_evaluation.py pageindex
+```
+
+#### Multiple RAG Evaluation
+
+Evaluate multiple RAG systems in sequence:
+
+```bash
+# Evaluate original two RAGs (rewriter + hybrid)
+python scripts/run_evaluation.py both
+
+# Evaluate all 6 RAG systems
+python scripts/run_evaluation.py all
+```
+
+#### Multi-Model Evaluation
+
+Evaluate a single RAG type across multiple LLM models:
+
+```bash
+python scripts/run_evaluation.py multi-model simple
+python scripts/run_evaluation.py multi-model hybrid-rrf
+```
+
+#### Comprehensive Evaluation
+
+Evaluate ALL RAG types with ALL models:
+
+```bash
+python scripts/run_evaluation.py all-models-all-rags
+```
+
+### Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--export` | `-e` | Export detailed analysis to CSV/Excel |
+| `--debug` | `-d` | Enable debug output for troubleshooting |
+
+### Examples
+
+```bash
+# Evaluate simple RAG with export
+python scripts/run_evaluation.py simple --export
+
+# Evaluate all RAGs with debug output
+python scripts/run_evaluation.py all --debug
+
+# Multi-model evaluation with export and debug
+python scripts/run_evaluation.py multi-model hybrid --export --debug
+
+# Comprehensive evaluation
+python scripts/run_evaluation.py all-models-all-rags
+```
+
+## RAG Types
+
+The following RAG architectures are supported:
+
+| Type | Description |
+|------|-------------|
+| **simple** | Simple Semantic RAG using vector similarity |
+| **hybrid** | Hybrid RAG combining BM25 and semantic search |
+| **hybrid-rrf** | Hybrid RAG with Reciprocal Rank Fusion |
+| **hyde** | HyDE RAG using hypothetical document embeddings |
+| **rewriter** | Multi-Query Rewriter RAG |
+| **pageindex** | PageIndex RAG with page-level context |
+
+## Evaluation Metrics
+
+The script evaluates RAG systems using RAGAS metrics:
+
+- **Faithfulness**: Measures answer faithfulness to retrieved context
+- **Answer Relevancy**: Measures answer relevance to the question
+- **Context Precision**: Precision of retrieved contexts
+- **Context Recall**: Recall of necessary information from ground truth
+
+## What the Script Does
+
+Depending on the command, the script performs different evaluation workflows:
+
+### Single RAG Evaluation
+
+1. **Initialize Evaluator**: Creates a `RAGASEvaluator` instance for the specified RAG type
+2. **Load Test Dataset**: Loads obstetric test queries (10 questions with ground truth)
+3. **Process Queries**: Runs each query through the RAG system
+4. **Generate Answers**: Collects answers, contexts, and performance metadata
+5. **Run RAGAS Metrics**: Evaluates using faithfulness, relevancy, precision, and recall
+6. **Display Results**: Shows aggregated scores and performance analysis
+7. **Save Results**: Exports JSON report to `results/` directory
+
+### Multi-Model Evaluation
+
+1. **Select RAG Type**: Initializes evaluator for specified RAG
+2. **Iterate Models**: Tests each model from the model registry
+3. **Run Evaluations**: Executes full evaluation for each model
+4. **Collect Results**: Aggregates metrics and performance data
+5. **Generate Report**: Creates consolidated multi-model comparison JSON
+
+### Comprehensive Evaluation
+
+1. **Iterate RAG Types**: Loops through all 6 RAG architectures
+2. **Iterate Models**: Tests each RAG with all available models
+3. **Track Progress**: Displays progress indicators and success/failure status
+4. **Build Report**: Creates comprehensive comparison matrix
+5. **Save Results**: Exports complete evaluation to timestamped JSON file
+
+## Output Files
+
+The script generates JSON files in the `results/` directory:
+
+### Single RAG Evaluation
+
+```
+ragas_evaluation_{rag_type}_{timestamp}.json
+```
+
+Contains:
+- Metadata (timestamp, RAG type, dataset size)
+- Aggregated metrics (overall scores)
+- Question-by-question results
+- Performance statistics (tokens, cost, execution time)
+
+### Multi-Model Evaluation
+
+```
+ragas_multimodel_{rag_type}_{timestamp}.json
+```
+
+Contains:
+- Metadata (models evaluated, RAG type)
+- Summary (per-model metrics and performance)
+- Question-by-question comparison across models
+
+### Comprehensive Evaluation
+
+```
+ragas_comprehensive_all_rags_all_models_{timestamp}.json
+```
+
+Contains:
+- Complete matrix of all RAGs × all models
+- Comparative metrics and performance data
+- Question-level details for every combination
+
+## Example Output
+
+```
+=== STARTING EMBEDDING CREATION PROCESS ===
+RAGAS Evaluator configured for: Simple Semantic RAG
+Starting RAGAS evaluation
+System: Simple Semantic RAG
+Dataset: Obstetric queries (10 questions)
+============================================================
+Processing 10 queries with Simple Semantic RAG
+Dataset prepared: 10 queries processed
+Starting RAGAS evaluation...
+Evaluation completed
+
+============================================================
+RAGAS EVALUATION RESULTS
+============================================================
+Faithfulness: 0.856
+Answer Relevancy: 0.923
+Context Precision: 0.782
+Context Recall: 0.891
+
+Average Score: 0.863
+Performance: Excellent
+
+Results saved to: results/ragas_evaluation_simple_20260311_143022.json
+
+Evaluation completed - 10 queries processed
+```
+
+## Configuration
+
+The script uses configuration from:
+
+- **Model Registry**: `src/common/model_provider.py` defines available LLM models
+- **Pricing Config**: `src/common/pricing.py` provides cost calculations
+- **Test Dataset**: Embedded in `ragas_evaluator.py` (10 obstetric questions)
+
+## Environment Requirements
+
+### API Keys
+
+Required environment variables in `.env`:
+
+```bash
+OPENAI_API_KEY=your_openai_key
+# Additional keys depending on models used
+ANTHROPIC_API_KEY=your_anthropic_key
+GOOGLE_API_KEY=your_google_key
+```
+
+### Dependencies
+
+- `ragas`: For evaluation metrics
+- `datasets`: For dataset handling
+- `langchain`: For RAG system integration
+- `pandas`: For result processing
+- `numpy`: For numerical operations
+
+## Implementation Details
+
+### Script Architecture
+
+The `run_evaluation.py` script is a thin CLI wrapper that:
+
+1. Imports the `main()` function from `src/evaluation/ragas_evaluator.py`
+2. Sets up the Python path to ensure imports work correctly
+3. Delegates all functionality to the evaluator module
+
+### Execution Flow
+
+```python
+# scripts/run_evaluation.py
+import sys
+from pathlib import Path
+
+# Ensure imports work from any working directory
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.evaluation.ragas_evaluator import main
+
+if __name__ == "__main__":
+    main()
+```
+
+## Advanced Features
+
+### Synchronous Fallback
+
+The evaluator includes a synchronous fallback mode for environments where async metric evaluation fails (e.g., Python 3.14+ async context issues).
+
+### Performance Tracking
+
+Tracks and reports:
+- Execution time per query
+- Input/output token counts
+- Cost per query and total cost
+- Token usage statistics
+
+### Custom Model Support
+
+Supports custom LLM models through the model registry:
+- GPT-4o, GPT-4o-mini
+- Claude models
+- Google Gemini models
+- Any LangChain-compatible model
+
+## Troubleshooting
+
+### Common Issues
+
+**"Model not found in registry"**
+- Ensure the model is defined in `MODELS_REGISTRY`
+- Check spelling of model name
+
+**"Error initializing OpenAI embeddings"**
+- Verify `OPENAI_API_KEY` is set in `.env`
+- Check API key has necessary permissions
+
+**"All-NaN metric output"**
+- Script automatically falls back to synchronous evaluation
+- Use `--debug` flag to see detailed error information
+
+### Debug Mode
+
+Enable debug mode for verbose output:
+
+```bash
+python scripts/run_evaluation.py simple --debug
+```
+
+Debug mode provides:
+- Detailed error traces
+- Sample query processing output
+- Metric calculation details
+- Performance profiling information
+
+## Related
+
+- [RAGAS Metrics](/evaluation/metrics): Understanding evaluation metrics
+- [RAG Systems](/rag): Available RAG architectures
+- [Model Configuration](/configuration/models): Configuring LLM models

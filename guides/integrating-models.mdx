@@ -1,0 +1,459 @@
+---
+title: 'Integrating New Models'
+description: 'Add and evaluate new language models in the benchmark'
+icon: 'brain'
+---
+
+This guide explains how to integrate new LLMs and specialized medical models into the Obstetrics RAG Benchmark.
+
+## Model Registry Architecture
+
+The benchmark uses a centralized model registry in `src/common/model_provider.py` that supports:
+
+- **OpenAI Models**: Direct API integration (GPT-4, GPT-3.5, etc.)
+- **HuggingFace Models**: Via OpenAI-compatible endpoints (TGI, Inference Endpoints)
+- **Specialized Medical Models**: Domain-specific models like MedPhi, MedGemma
+
+## Model Configuration Structure
+
+Each model is registered using the `ModelConfig` dataclass:
+
+```python
+@dataclass
+class ModelConfig:
+    """Configuration for a language model."""
+    
+    name: str
+    """Short name/key for the model (e.g., 'gpt-4.1', 'mediphi')."""
+    
+    model_id: str
+    """Full model identifier (e.g., 'gpt-4.1', 'microsoft/MediPhi')."""
+    
+    provider: Literal["openai", "huggingface"]
+    """Model provider type."""
+    
+    endpoint_url_env: Optional[str] = None
+    """Environment variable for HF endpoint URL (e.g., 'MEDIPHI_ENDPOINT_URL')."""
+    
+    temperature: float = 0.0
+    """Sampling temperature for the model."""
+```
+
+## Adding OpenAI Models
+
+<Steps>
+  <Step title="Register in Model Registry">
+    Add your model configuration to `MODELS_REGISTRY` in `src/common/model_provider.py:181-208`:
+    
+    ```python
+    MODELS_REGISTRY: Dict[str, ModelConfig] = {
+        # Existing models...
+        "gpt-5": ModelConfig(
+            name="gpt-5",
+            model_id="gpt-5",
+            provider="openai",
+            temperature=0.0
+        ),
+        # Add your new model:
+        "gpt-4-turbo": ModelConfig(
+            name="gpt-4-turbo",
+            model_id="gpt-4-turbo-2024-04-09",
+            provider="openai",
+            temperature=0.0
+        ),
+    }
+    ```
+  </Step>
+  
+  <Step title="Configure API Access">
+    Ensure your OpenAI API key is set in `.env`:
+    
+    ```bash
+    OPENAI_API_KEY=sk-...
+    ```
+    
+    The model will be automatically instantiated using the OpenAI API.
+  </Step>
+  
+  <Step title="Test Model Access">
+    Verify the model works:
+    
+    ```python
+    from src.common.model_provider import MODELS_REGISTRY, create_llm
+    
+    # Get model config
+    config = MODELS_REGISTRY["gpt-4-turbo"]
+    
+    # Create LLM instance
+    llm = create_llm(config)
+    
+    # Test generation
+    response = llm.invoke("Hello, how are you?")
+    print(response.content)
+    ```
+  </Step>
+  
+  <Step title="Run Evaluation">
+    Evaluate with your new model:
+    
+    ```bash
+    # Single RAG architecture
+    python scripts/run_evaluation.py multi-model hybrid
+    
+    # Or all architectures
+    python scripts/run_evaluation.py all-models-all-rags
+    ```
+  </Step>
+</Steps>
+
+## Adding HuggingFace Models
+
+For models deployed via TGI (Text Generation Inference) or HuggingFace Inference Endpoints:
+
+<Steps>
+  <Step title="Deploy Your Model">
+    Deploy your model to an OpenAI-compatible endpoint:
+    
+    - **HuggingFace Inference Endpoints**: Automatic OpenAI-compatible API
+    - **Text Generation Inference (TGI)**: Self-hosted with OpenAI API compatibility
+    - **vLLM**: High-performance serving with OpenAI compatibility
+    
+    Your endpoint should expose:
+    - `POST /v1/chat/completions` (OpenAI format)
+    - Authentication via API token
+  </Step>
+  
+  <Step title="Configure Environment Variables">
+    Add endpoint URL and authentication to `.env`:
+    
+    ```bash
+    # HuggingFace Token (required for all HF models)
+    HF_TOKEN=hf_...
+    
+    # Model-specific endpoint URLs
+    MEDIPHI_ENDPOINT_URL=https://your-endpoint.aws.endpoints.huggingface.cloud
+    MEDGEMMA_ENDPOINT_URL=https://your-endpoint.aws.endpoints.huggingface.cloud
+    YOUR_MODEL_ENDPOINT_URL=https://your-endpoint.com
+    ```
+    
+    <Note>
+      The endpoint URL can include or omit `/v1` - the framework normalizes it automatically.
+    </Note>
+  </Step>
+  
+  <Step title="Register Model in Registry">
+    Add your model to `MODELS_REGISTRY` in `src/common/model_provider.py`:
+    
+    ```python
+    MODELS_REGISTRY: Dict[str, ModelConfig] = {
+        # Existing models...
+        "your-model": ModelConfig(
+            name="your-model",
+            model_id="organization/model-name",  # Full HF model ID
+            provider="huggingface",
+            endpoint_url_env="YOUR_MODEL_ENDPOINT_URL",  # Env var name
+            temperature=0.0
+        ),
+    }
+    ```
+  </Step>
+  
+  <Step title="Verify Endpoint Compatibility">
+    Test the endpoint setup:
+    
+    ```python
+    from src.common.model_provider import create_llm, MODELS_REGISTRY
+    
+    config = MODELS_REGISTRY["your-model"]
+    llm = create_llm(config)
+    
+    # Test simple generation
+    response = llm.invoke("Test message")
+    print(f"Response: {response.content}")
+    ```
+    
+    If you get errors, check:
+    - Endpoint URL is correct and accessible
+    - HF_TOKEN is valid and has access to the model
+    - Endpoint is running and accepting requests
+  </Step>
+</Steps>
+
+## Model Provider Implementation Details
+
+The `create_llm()` function handles model instantiation:
+
+```python
+def create_llm(config: ModelConfig) -> BaseChatModel:
+    """Factory function to create a language model."""
+    load_dotenv_if_needed()
+    
+    if config.provider == "openai":
+        # Standard OpenAI model
+        return ChatOpenAI(
+            model_name=config.model_id,
+            temperature=config.temperature
+        )
+    
+    elif config.provider == "huggingface":
+        # HuggingFace model via OpenAI-compatible endpoint
+        endpoint_url = os.getenv(config.endpoint_url_env)
+        if not endpoint_url:
+            raise ValueError(
+                f"Environment variable '{config.endpoint_url_env}' not set."
+            )
+        
+        hf_token = os.getenv("HF_TOKEN")
+        if not hf_token:
+            raise ValueError("HF_TOKEN environment variable not set.")
+        
+        # Normalize endpoint URL to include /v1
+        base_url = _normalize_openai_compatible_base_url(endpoint_url)
+        
+        return ChatOpenAI(
+            base_url=base_url,
+            api_key=hf_token,
+            model_name=config.model_id,
+            temperature=config.temperature,
+            max_tokens=512,  # Prevents infinite generation
+        )
+```
+
+## Integrating Medical-Specialized Models
+
+### Example: Adding a Medical LLM
+
+Let's integrate a hypothetical medical model "ClinicalLLaMA":
+
+<Steps>
+  <Step title="Deploy the Model">
+    ```bash
+    # Using HuggingFace Inference Endpoints
+    # Or deploy via TGI:
+    docker run -p 8080:80 \
+      -v $PWD/data:/data \
+      ghcr.io/huggingface/text-generation-inference:latest \
+      --model-id clinicalllm/clinical-llama-13b \
+      --max-input-length 2048 \
+      --max-total-tokens 4096
+    ```
+  </Step>
+  
+  <Step title="Configure Environment">
+    ```bash
+    # .env
+    HF_TOKEN=hf_your_token_here
+    CLINICAL_LLAMA_ENDPOINT_URL=http://localhost:8080
+    ```
+  </Step>
+  
+  <Step title="Register Model">
+    ```python
+    # In src/common/model_provider.py
+    "clinical-llama": ModelConfig(
+        name="clinical-llama",
+        model_id="clinicalllm/clinical-llama-13b",
+        provider="huggingface",
+        endpoint_url_env="CLINICAL_LLAMA_ENDPOINT_URL",
+        temperature=0.0
+    ),
+    ```
+  </Step>
+  
+  <Step title="Evaluate Against Benchmarks">
+    ```bash
+    # Evaluate on all RAG architectures
+    python scripts/run_evaluation.py multi-model hybrid
+    
+    # Or comprehensive evaluation
+    python scripts/run_evaluation.py all-models-all-rags
+    ```
+  </Step>
+</Steps>
+
+## Model Identity and Cost Tracking
+
+The framework automatically resolves model identity for cost tracking:
+
+```python
+from src.common.model_provider import get_model_identity
+
+model_identity = get_model_identity(llm=llm_instance)
+# Returns:
+# {
+#     "provider": "openai" | "huggingface" | "unknown",
+#     "model_id": "full-model-identifier",
+#     "model_name": "short-name"
+# }
+```
+
+This enables:
+- Consistent cost calculation across providers
+- Metadata tracking in evaluation results
+- Provider-specific optimizations
+
+## Pricing Configuration
+
+Add pricing information for cost tracking in `src/common/pricing.py`:
+
+```python
+PRICING_TABLE = {
+    "your-model": {
+        "provider": "huggingface",
+        "input_cost_per_1k": 0.0001,   # USD per 1K input tokens
+        "output_cost_per_1k": 0.0002,  # USD per 1K output tokens
+    },
+}
+```
+
+## Testing New Models
+
+### Unit Testing
+
+```python
+import pytest
+from src.common.model_provider import create_llm, MODELS_REGISTRY
+
+def test_model_creation():
+    """Test model can be created"""
+    config = MODELS_REGISTRY["your-model"]
+    llm = create_llm(config)
+    assert llm is not None
+
+def test_model_generation():
+    """Test model can generate responses"""
+    config = MODELS_REGISTRY["your-model"]
+    llm = create_llm(config)
+    response = llm.invoke("Test question")
+    assert response.content
+    assert len(response.content) > 0
+```
+
+### Integration Testing
+
+Test with a simple RAG query:
+
+```python
+from src.rag.simple import query_for_evaluation
+
+result = query_for_evaluation(
+    question="¿Cuál es la cantidad ideal de controles prenatales?",
+    llm_model="your-model"
+)
+
+print(f"Answer: {result['answer']}")
+print(f"Contexts: {len(result['contexts'])}")
+print(f"Cost: ${result['metadata']['total_cost']:.6f}")
+```
+
+### Evaluation Testing
+
+Run a full evaluation:
+
+```bash
+# With debug output to see detailed progress
+python scripts/run_evaluation.py simple --debug
+```
+
+## Multi-Model Evaluation Workflow
+
+The benchmark supports comparing multiple models systematically:
+
+```python
+# In your evaluation script
+from src.evaluation.ragas_evaluator import RAGASEvaluator
+
+evaluator = RAGASEvaluator(rag_type="hybrid")
+
+# Test specific models
+models_to_test = ["gpt-4o", "gpt-5", "clinical-llama", "mediphi"]
+evaluator.run_multi_model_evaluation(models_to_test=models_to_test)
+```
+
+This generates a consolidated report comparing:
+- RAGAS metrics (faithfulness, relevancy, precision, recall)
+- Performance metrics (execution time, token usage)
+- Cost metrics (total cost, cost per question)
+
+## Common Issues and Solutions
+
+<AccordionGroup>
+  <Accordion title="ValueError: HF_TOKEN environment variable not set">
+    **Solution**: Add your HuggingFace token to `.env`:
+    ```bash
+    HF_TOKEN=hf_your_token_here
+    ```
+  </Accordion>
+  
+  <Accordion title="ValueError: Environment variable 'MODEL_ENDPOINT_URL' not set">
+    **Solution**: Add your endpoint URL to `.env`:
+    ```bash
+    YOUR_MODEL_ENDPOINT_URL=https://your-endpoint.com
+    ```
+  </Accordion>
+  
+  <Accordion title="Model generates infinite output">
+    **Solution**: The `max_tokens` parameter is set for HuggingFace models. If issues persist, adjust in `create_llm()`:
+    ```python
+    max_tokens=512,  # Increase or decrease as needed
+    ```
+  </Accordion>
+  
+  <Accordion title="Connection timeout to endpoint">
+    **Solution**: 
+    - Verify endpoint is running: `curl https://your-endpoint.com/health`
+    - Check firewall/network settings
+    - Increase timeout in model configuration
+  </Accordion>
+  
+  <Accordion title="Model not found in registry during evaluation">
+    **Solution**: Ensure model key matches exactly:
+    ```python
+    # Registry key
+    "my-model": ModelConfig(...)
+    
+    # Must match in evaluation
+    evaluator.run_multi_model_evaluation(models_to_test=["my-model"])
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+### Model Selection
+
+- **General Purpose**: Start with GPT-4o for baseline performance
+- **Cost Optimization**: Use GPT-3.5-turbo for development/testing
+- **Domain Expertise**: Evaluate medical-specialized models for clinical accuracy
+- **Latency Sensitive**: Consider smaller models with faster inference
+
+### Evaluation Strategy
+
+1. **Single Model First**: Test new models individually before batch evaluation
+2. **Compare to Baseline**: Always compare against GPT-4o baseline
+3. **Multiple RAG Architectures**: Test across all RAG strategies to find optimal pairing
+4. **Statistical Significance**: Run multiple trials for robust comparisons
+
+### Cost Management
+
+- Use smaller models for development and testing
+- Cache results to avoid re-running expensive evaluations
+- Monitor token usage in evaluation metadata
+- Set API rate limits to control costs
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Customizing Metrics" icon="sliders" href="/guides/customizing-metrics">
+    Extend evaluation with custom metrics
+  </Card>
+  <Card title="Adding RAG Architectures" icon="diagram-project" href="/guides/adding-rag-architectures">
+    Implement new retrieval strategies
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/introduction">
+    Complete API documentation
+  </Card>
+  <Card title="Results Analysis" icon="chart-bar" href="/evaluation/interpreting-results">
+    Understand evaluation outputs
+  </Card>
+</CardGroup>
